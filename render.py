@@ -620,7 +620,7 @@ async def render_user_card(
                 "() => Array.from(document.querySelectorAll('img')).every(i => i.complete)",
                 timeout=10000,
             )
-        shot = await page.screenshot(full_page=True)
+        shot = await page.locator("#template").screenshot()
         await page.close()
         out = os.path.join(avatar_cache, f"user_card_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
         await asyncio.to_thread(_save_png, out, shot)
