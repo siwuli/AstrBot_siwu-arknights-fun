@@ -1,0 +1,176 @@
+{
+  "fun_user_title": {
+    "description": "对用户的称呼",
+    "hint": "签到/回复中的称呼，如：博士 / 主人",
+    "type": "string",
+    "default": "博士"
+  },
+  "sign_enabled": {
+    "description": "启用每日签到",
+    "hint": "签到获取寻访凭证/合成玉",
+    "type": "bool",
+    "default": true
+  },
+  "sign_coupon": {
+    "description": "每日签到发放寻访凭证",
+    "hint": "阿米娅默认每天 50 张",
+    "type": "int",
+    "default": 50
+  },
+  "sign_jade": {
+    "description": "每日签到发放合成玉",
+    "hint": "默认 0（合成玉主要靠猜干员获得）",
+    "type": "int",
+    "default": 0
+  },
+  "jade_max": {
+    "description": "合成玉持有上限",
+    "hint": "猜干员/签到获得的合成玉受此上限约束，默认 30000",
+    "type": "int",
+    "default": 30000
+  },
+  "gacha_enabled": {
+    "description": "启用抽卡功能",
+    "hint": "关闭后所有抽卡指令回复已关闭",
+    "type": "bool",
+    "default": true
+  },
+  "gacha_auto_download": {
+    "description": "启动时自动下载全量 gamedata 数据",
+    "hint": "下载到 {AstrBot数据目录}/resource/gamedata（与其他方舟插件共享，不重复下载）。首次约 150MB，完成后自动切换真实卡池",
+    "type": "bool",
+    "default": true
+  },
+  "gacha_free": {
+    "description": "免费抽卡（不消耗寻访凭证/合成玉）",
+    "hint": "开启后抽卡不扣资源，仅记录保底与干员箱",
+    "type": "bool",
+    "default": false
+  },
+  "gacha_coupon_init": {
+    "description": "新用户初始寻访凭证",
+    "hint": "每个用户首次使用时发放的寻访凭证数量",
+    "type": "int",
+    "default": 10
+  },
+  "gacha_jade_init": {
+    "description": "新用户初始合成玉",
+    "hint": "默认 0，通过签到/猜干员获得",
+    "type": "int",
+    "default": 0
+  },
+  "jade_per_pull": {
+    "description": "凭证不足时每抽消耗合成玉",
+    "hint": "阿米娅默认 600/抽",
+    "type": "int",
+    "default": 600
+  },
+  "gacha_guarantee5": {
+    "description": "十连保底 5★",
+    "hint": "开启后十连中若无 5★ 及以上，第 10 抽强制保底 5★/6★",
+    "type": "bool",
+    "default": true
+  },
+  "gacha_pickup_6": {
+    "description": "6★ UP 覆盖（逗号分隔，可空）",
+    "hint": "新版官方数据不含当期 UP 名单时，可在此手动指定，如：玛恩纳,缪尔赛思",
+    "type": "string",
+    "default": ""
+  },
+  "gacha_pickup_5": {
+    "description": "5★ UP 覆盖（逗号分隔，可空）",
+    "hint": "同上，5★ 概率提升干员",
+    "type": "string",
+    "default": ""
+  },
+  "gacha_render_image": {
+    "description": "抽卡结果输出图片",
+    "hint": "十连及单抽渲染干员立绘拼图（PIL 渲染，缺失头像自动下载）",
+    "type": "bool",
+    "default": true
+  },
+  "gacha_fetch_avatar": {
+    "description": "缺失头像自动下载",
+    "hint": "从头像仓库按需下载到插件缓存目录",
+    "type": "bool",
+    "default": true
+  },
+  "gacha_image_font": {
+    "description": "图片字体路径（留空自动检测）",
+    "hint": "Windows: C:/Windows/Fonts/msyh.ttc；Linux 一般用 /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "type": "string",
+    "default": ""
+  },
+  "gacha_auto_update": {
+    "description": "定时自动更新 gamedata 数据",
+    "hint": "开启后按间隔增量更新（与远端比对文件大小，只下载有变化的表）",
+    "type": "bool",
+    "default": true
+  },
+  "gacha_update_interval_hours": {
+    "description": "数据自动更新间隔（小时）",
+    "hint": "默认 24 小时检查一次",
+    "type": "int",
+    "default": 24
+  },
+  "guess_enabled": {
+    "description": "启用猜干员游戏",
+    "hint": "关闭后「猜干员」指令回复已关闭",
+    "type": "bool",
+    "default": true
+  },
+  "guess_questions": {
+    "description": "每局题目数量",
+    "hint": "阿米娅默认 30 题（较久），QQ 群建议 5~10 题",
+    "type": "int",
+    "default": 5
+  },
+  "guess_timeout_sec": {
+    "description": "每题等待秒数",
+    "hint": "无人作答超时自动进入下一题，默认 60 秒",
+    "type": "int",
+    "default": 60
+  },
+  "guess_points_bingo": {
+    "description": "猜对基础得分",
+    "hint": "按难度倍率（初级1~资深4）与提示使用率结算",
+    "type": "int",
+    "default": 100
+  },
+  "guess_jade_bingo": {
+    "description": "猜对基础合成玉",
+    "hint": "按难度倍率与连击加成发放，阿米娅默认 300",
+    "type": "int",
+    "default": 300
+  },
+  "guess_jade_rank1": {
+    "description": "每局第 1 名合成玉奖励",
+    "hint": "按难度倍率结算，阿米娅默认 3000",
+    "type": "int",
+    "default": 3000
+  },
+  "guess_jade_rank2": {
+    "description": "每局第 2 名合成玉奖励",
+    "hint": "阿米娅默认 2000",
+    "type": "int",
+    "default": 2000
+  },
+  "guess_jade_rank3": {
+    "description": "每局第 3 名合成玉奖励",
+    "hint": "阿米娅默认 1000",
+    "type": "int",
+    "default": 1000
+  },
+  "guess_auto_update": {
+    "description": "猜干员数据自动更新",
+    "hint": "与抽卡共用同一 gamedata 更新任务",
+    "type": "bool",
+    "default": true
+  },
+  "guess_update_interval_hours": {
+    "description": "猜干员数据更新间隔（小时）",
+    "hint": "默认 24 小时检查一次",
+    "type": "int",
+    "default": 24
+  }
+}
