@@ -610,7 +610,7 @@ async def render_user_card(
         path_abs = await asyncio.to_thread(os.path.abspath, _USER_CARD_TEMPLATE)
         url = "file:///" + path_abs.replace("\\", "/")
         browser = await _ensure_browser()
-        page = await browser.new_page(viewport={"width": 720, "height": 320}, device_scale_factor=2)
+        page = await browser.new_page(viewport={"width": 700, "height": 300}, device_scale_factor=2)
         await page.goto(url, timeout=30000)
         await page.wait_for_load_state("load", timeout=30000)
         await page.evaluate("if ('init' in window) { init(" + json.dumps(data) + ") }")
@@ -628,4 +628,3 @@ async def render_user_card(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[arknights_fun] 用户信息卡片浏览器渲染失败: {e}")
         return None
-
