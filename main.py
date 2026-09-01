@@ -32,8 +32,10 @@ from .admin_web import ArknightsFunWebAdmin
 from .gacha import JADE_PER_PULL, PULL_RE, GachaEngine, parse_pull_count
 from .gamedata import (
     EXCEL_DIR,
+    POOLS_CACHE,
     GameData,
     download_excel_sync,
+    download_pools_sync,
     excel_ready,
 )
 from .guess import _SESSIONS, DIFFICULTIES, GameActiveFilter, GuessEngine
@@ -227,8 +229,9 @@ class ArknightsFunPlugin(star.Star):
         interval = max(3600, min(intervals)) if intervals else 24 * 3600
         while True:
             try:
+                ok_pools = await asyncio.to_thread(download_pools_sync)
                 ok = await asyncio.to_thread(download_excel_sync)
-                if ok and (self.data.using_builtin or self._data_changed_since_load()):
+                if (ok or ok_pools) and (self.data.using_builtin or self._data_changed_since_load()):
                     self.data.load()
                     logger.info(f"{LOG_TAG} 数据已更新并重新加载")
             except Exception as e:  # noqa: BLE001
@@ -236,13 +239,18 @@ class ArknightsFunPlugin(star.Star):
             await asyncio.sleep(interval)
 
     def _data_changed_since_load(self) -> bool:
-        path = os.path.join(EXCEL_DIR, "character_table.json")
-        if not os.path.exists(path):
-            return False
+        paths = [
+            os.path.join(EXCEL_DIR, "character_table.json"),
+            POOLS_CACHE,
+        ]
         stamp = getattr(self, "_loaded_stamp", 0)
-        try:
-            current = os.path.getmtime(path)
-        except OSError:
+        current = 0
+        for path in paths:
+            try:
+                current = max(current, os.path.getmtime(path))
+            except OSError:
+                continue
+        if current <= 0:
             return False
         self._loaded_stamp = current
         return current > stamp
@@ -447,34 +455,82 @@ class ArknightsFunPlugin(star.Star):
             yield self._send(event, "暂无卡池数据，请稍后重试（数据下载中）。")
             return
         lines = ["博士，当前可用卡池："]
-        for i, p in enumerate(self.data.pools[:20], 1):
+        for i, p in enumerate(self.data.pools, 1):
+            name = p.get("name") or "未知池"
+            if int(p.get("limit_pool") or 0):
+                name = f"（限定）{name}"
             up6 = (p.get("pickup_6") or "").replace(",", "、")
             up5 = (p.get("pickup_5") or "").replace(",", "、")
-            line = f"[{i}] {p.get('name')}"
+            line = f"[{i}] {name}"
             if up6:
-                line += "\n    6★UP：{up6}"
+                line += f"\n    ★6 UP：{up6}"
             if up5:
-                line += "\n    5★UP：{up5}"
+                line += f"\n    ★5 UP：{up5}"
             if not up6 and not up5:
-                line += "\n    （无 UP 数据，可用配置 gacha_pickup_6/5 指定）"
+                line += "\n    （无 UP 数据，可用管理后台/配置指定）"
             lines.append(line)
-        lines.append("\n回复「卡池切换 N」切换卡池。")
+        lines.append("\n回复「卡池切换 N」（或「卡池切换 池名」）切换卡池。")
         yield self._send(event, "\n".join(lines))
 
     @filter.command("卡池切换")
     async def cmd_pool_switch(self, event: AstrMessageEvent, index: int = 1):
         uid = str(event.get_sender_id() or "")
-        idx = int(index) - 1
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            index = 0
+        idx = index - 1 if index > 0 else -1
+
         if idx < 0 or idx >= len(self.data.pools):
-            yield self._send(event, "博士，卡池序号不正确哦，用「卡池」看下列表吧~（内容过长时要选择完整序号）")
-            return
-        pool = self.data.pools[idx]
+            # 支持按池名匹配（如「卡池切换 常驻寻访」）
+            text = str(getattr(event, "message_str", "") or "")
+            name_hit = None
+            for p in self.data.pools:
+                pname = str(p.get("name") or "")
+                if pname and pname in text:
+                    name_hit = p
+                    break
+            pool = name_hit
+            if pool is None:
+                yield self._send(event, "博士，卡池序号不正确哦，用「卡池」看下列表吧~（可回复完整池名）")
+                return
+        else:
+            pool = self.data.pools[idx]
 
         def fn(user: dict) -> None:
             user["pool"] = str(pool.get("id", ""))
 
         self._with_user(uid, fn)
-        yield self._send(event, f"已切换卡池为：{self._pool_name(pool)}")
+
+        name = self._pool_name(pool)
+        if int(pool.get("limit_pool") or 0):
+            name = f"（限定）{name}"
+        lines = [f"博士的卡池已切换为：【{name}】"]
+        desc = str(pool.get("desc") or "").strip()
+        if desc and ("," not in desc):
+            lines.append(desc)
+        else:
+            up6 = (pool.get("pickup_6") or "").replace(",", "、")
+            up5 = (pool.get("pickup_5") or "").replace(",", "、")
+            if up6:
+                lines.append(f"★6 UP：{up6}")
+            if up5:
+                lines.append(f"★5 UP：{up5}")
+            if not up6 and not up5:
+                lines.append("（该池无 UP 名单，可用管理后台/配置指定）")
+        text = "\n".join(lines)
+
+        img = str(pool.get("pool_image") or "").strip()
+        if img and bool(self._cfg("gacha_render_image", True)):
+            try:
+                result = event.make_result()
+                result.url_image(img)
+                event.stop_event()
+                yield result
+                return
+            except Exception:  # noqa: BLE001
+                pass  # 网络图发送失败则降级纯文本
+        yield self._send(event, text)
 
     @filter.command("box")
     @filter.command("我的干员")

@@ -59,10 +59,19 @@
       statCard("持有合成玉", s.total_jade, "💎");
   }
 
+  function poolSourceText(s) {
+    if (s === "amiya_official") { return "✅ 阿米娅官方卡池接口（原版数据源，历期限定池齐全）"; }
+    if (s === "excel") { return "游戏 excel 解析（gacha_table）"; }
+    if (s === "builtin") { return "内置兜底数据（等待下载官方卡池）"; }
+    return s || "未知";
+  }
+
   function renderDataStatus(d) {
     var rows = [
       ["gamedata excel", d.excel_ready ? "✅ 已就绪（" + d.excel_files + " 个文件）" : "⏳ 未就绪（后台下载中/内置兜底）"],
       ["上次更新", d.last_update || "未知"],
+      ["卡池数据源", poolSourceText(d.pool_source)],
+      ["卡池更新", d.pools_updated || "—"],
       ["干员数据", d.operators + " 名"],
       ["卡池", d.pools + " 个"],
       ["语音台词", d.voices + " 条"],

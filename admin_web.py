@@ -17,7 +17,7 @@ import os
 
 from astrbot.api.web import error_response, json_response, request
 
-from .gamedata import EXCEL_DIR, download_excel_sync, excel_ready
+from .gamedata import EXCEL_DIR, download_excel_sync, download_pools_sync, excel_ready, pools_last_update
 
 logger = logging.getLogger("astrbot")
 
@@ -71,6 +71,8 @@ class ArknightsFunWebAdmin:
                         "last_update": self._last_update_text(),
                         "operators": len(p.data.operators),
                         "pools": len(p.data.pools),
+                        "pool_source": p.data.pool_source,
+                        "pools_updated": pools_last_update(),
                         "voices": sum(len(v) for v in p.data.voices.values()),
                     },
                     "summary": {
@@ -193,15 +195,16 @@ class ArknightsFunWebAdmin:
 
     async def api_update_data(self):
         try:
+            ok_pools = await asyncio.to_thread(download_pools_sync)
             ok = await asyncio.to_thread(download_excel_sync)
-            if ok:
+            if ok or ok_pools:
                 self.p.data.load()
             return json_response(
                 {
                     "ok": True,
                     "data": {
                         "success": ok,
-                        "message": "数据更新完成" if ok else "更新未完成（无变化或网络失败，见日志）",
+                        "message": "卡池与干员数据已更新" if (ok or ok_pools) else "更新未完成（无变化或网络失败，见日志）",
                     },
                 },
             )

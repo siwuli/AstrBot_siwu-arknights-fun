@@ -45,6 +45,11 @@ ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 BUILTIN_OPERATORS = os.path.join(ASSETS_DIR, "operators.json")
 BUILTIN_POOLS = os.path.join(ASSETS_DIR, "pools.json")
 
+# 卡池官方数据源：阿米娅官方 gacha API（与原版 amiyabot-arknights-gacha 完全相同），
+# 含真实池名/UP 名单/池子图（101 个池：常驻、中坚、往期限定等），启动与定时任务自动同步。
+AMIYA_POOL_API = "https://cdn.amiyabot.com/api/v1/gacha"
+POOLS_CACHE = os.path.join(GAMEDATA_ROOT, "pools_remote.json")
+
 _download_lock = threading.Lock()
 
 
@@ -145,6 +150,78 @@ def download_excel_sync() -> bool:
             _release_update_lock()
 
 
+def _parse_remote_pool(p: dict) -> dict | None:
+    """阿米娅官方 Pool 记录 → 插件池模型（字段对齐原版 pool_methods.copy_props）。"""
+    name = str(p.get("pool_name") or "").strip()
+    if not name:
+        return None
+    return {
+        "id": str(p.get("id") or ""),
+        "pool_uuid": str(p.get("pool_uuid") or ""),
+        "name": name,
+        "desc": str(p.get("pool_description") or "").strip(),
+        "pool_image": str(p.get("pool_image") or "").strip(),
+        "limit_pool": int(p.get("limit_pool") or 0),
+        "is_classic_only": bool(p.get("is_classicOnly")),
+        "pickup_6": str(p.get("pickup_6") or "").strip(),
+        "pickup_5": str(p.get("pickup_5") or "").strip(),
+        "pickup_6_rate": 0.5,
+        "pickup_5_rate": 0.5,
+        "remote": True,
+    }
+
+
+def download_pools_sync() -> bool:
+    """同步阿米娅官方卡池列表到公共 gamedata 目录（原版相同数据源）。
+
+    失败不影响其他数据；返回是否写入成功（供上层判断是否需要重载）。
+    """
+    with _download_lock:
+        try:
+            data = _http_get(AMIYA_POOL_API, timeout=60)
+            payload = json.loads(data.decode("utf-8"))
+            pools = ((payload or {}).get("data") or {}).get("Pool") or []
+            parsed = [_parse_remote_pool(p) for p in pools]
+            parsed = [p for p in parsed if p and p.get("name")]
+            if not parsed:
+                logger.warning(f"{LOG_TAG} 官方卡池接口返回为空，保留现有数据")
+                return False
+            os.makedirs(GAMEDATA_ROOT, exist_ok=True)
+            tmp = POOLS_CACHE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "source": "amiya_official",
+                        "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "pools": parsed,
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=1,
+                )
+            os.replace(tmp, POOLS_CACHE)
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"{LOG_TAG} 官方卡池同步失败（保留现有卡池）: {e}")
+            return False
+
+
+def pools_last_update() -> str:
+    """官方卡池缓存的上次更新时间（字符串或 '未知'）。"""
+    try:
+        with open(POOLS_CACHE, encoding="utf-8") as f:
+            data = json.load(f)
+        updated = str((data or {}).get("updated") or "").strip()
+        if updated:
+            return updated
+    except (OSError, ValueError):
+        pass
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(POOLS_CACHE)))
+    except OSError:
+        return "未知"
+
+
 class GameData:
     """干员/卡池/语音/档案数据（公共 gamedata 优先，内置资产兜底）。
 
@@ -159,6 +236,7 @@ class GameData:
         self.voices: dict[str, list[str]] = {}  # id -> 语音台词文本
         self.stories: dict[str, list[str]] = {}  # id -> 档案文本
         self.using_builtin = True
+        self.pool_source = "builtin"  # amiya_official | excel | builtin
         self.load()
 
     @staticmethod
@@ -172,15 +250,20 @@ class GameData:
         return "预备干员" not in str(name or "")
 
     def load(self) -> None:
-        """优先读公共 excel；失败回退内置资产。"""
+        """优先读公共 excel；失败回退内置资产；卡池一律官方 API 缓存优先。"""
+        loaded_excel = False
         if excel_ready():
             try:
                 self._load_excel()
+                loaded_excel = True
                 self.using_builtin = False
-                return
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"{LOG_TAG} excel 解析失败，回退内置数据: {e}")
-        self._load_builtin()
+        if not loaded_excel:
+            self._load_builtin()
+        if not self._load_pools_remote():
+            # 官方缓存不存在时保留 _load_excel/_load_builtin 已加载的卡池
+            pass
 
     # ---------------- 内置兜底 ----------------
     def _load_builtin(self) -> None:
@@ -199,6 +282,7 @@ class GameData:
                 self.pools = json.load(f).get("pools", [])
         except (OSError, ValueError):
             self.pools = []
+        self.pool_source = "builtin"
 
     # ---------------- 全量 excel ----------------
     def _load_excel(self) -> None:
@@ -255,8 +339,24 @@ class GameData:
             self.by_rarity[r].sort()
 
     # ---------------- 卡池 ----------------
+    def _load_pools_remote(self) -> bool:
+        """读取阿米娅官方卡池缓存（download_pools_sync 落盘），成功返回 True。"""
+        try:
+            with open(POOLS_CACHE, encoding="utf-8") as f:
+                data = json.load(f)
+            pools = (data or {}).get("pools") or []
+            if not pools or not isinstance(pools, list):
+                return False
+            self.pools = [p for p in pools if isinstance(p, dict) and p.get("name")]
+            self.pool_source = "amiya_official" if self.pools else "builtin"
+            return bool(self.pools)
+        except (OSError, ValueError):
+            return False
+
     def _load_pools_excel(self) -> None:
-        """从 gacha_table.json 取当期（或最新）真实卡池。"""
+        """卡池加载：官方 API 缓存优先（原版数据源）→ 游戏 excel → 内置兜底。"""
+        if self._load_pools_remote():
+            return
         path = os.path.join(EXCEL_DIR, "gacha_table.json")
         try:
             with open(path, encoding="utf-8") as f:
@@ -269,6 +369,7 @@ class GameData:
             parsed = [p for p in parsed if p and p.get("name")]
             if parsed:
                 self.pools = parsed
+                self.pool_source = "excel"
         except Exception as e:  # noqa: BLE001
             logger.warning(f"{LOG_TAG} 真实卡池解析失败，使用内置池: {e}")
 
