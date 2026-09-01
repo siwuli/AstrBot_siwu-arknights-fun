@@ -493,6 +493,15 @@ def _rounded_progress(draw, box, ratio: float, color: str = "#e91e63"):
         draw.rounded_rectangle((x0 + 1, y0 + 1, x0 + 1 + fill_w, y1 - 1), radius=radius, fill=color)
 
 
+def _vtext(draw, pos, text, font, fill="#000000"):
+    """竖排（逐字）绘制文字，取字符中心对齐。"""
+    x, y = pos
+    for _ch in text:
+        draw.text((x, y), _ch, font=font, fill=fill)
+        bbox = draw.textbbox((0, 0), _ch, font=font)
+        y += bbox[3] - bbox[1] + 2
+
+
 def _fit_text(draw, text: str, font, max_w: int) -> str:
     """按像素宽度截断文本，超长补省略号。"""
     if draw.textlength(text, font=font) <= max_w:
@@ -516,10 +525,12 @@ def render_user_card(
     fetch_avatar: bool = True,
     jade_cap: int = 30000,
 ) -> str | None:
-    """复刻 Amiya userInfo 卡片：700×300 模糊背景 + 头像 + 签到/信赖/心情 + 合成玉进度 + 抽卡统计柱状图 + 条码。
+    """复刻 Amiya userInfo 卡片（严格按原版 HTML/CSS 布局）：700×300 模糊背景。
 
-    字段映射：信赖值 = user.feeling（签到 +50，显示 feeling/10%）；心情值 = user.mood/15*100%。
-    布局为清晰三栏（头像昵称 / 签到+合成玉 / 抽卡统计+星级柱状图），右缘竖条码，避免拥挤与溢出。
+    左列 base-info：圆形头像 + 昵称，下方签到四行 + 合成玉 + 进度条；
+    右列 gacha-info：抽卡统计四行 + 横向星级条形图（y 轴竖排标签 / x 轴 0~50% 刻度）；
+    最右白色半透明竖条码。字段映射：信赖值 = user.feeling（签到 +50，显示 feeling/10%）；
+    心情值 = user.mood/15*100%。
     """
     try:
         from PIL import Image, ImageDraw, ImageFilter
@@ -538,100 +549,110 @@ def render_user_card(
         draw = ImageDraw.Draw(img)
 
         f22 = _font(22, custom_font)
-        f15 = _font(15, custom_font)
+        f18 = _font(18, custom_font)
+        f16 = _font(16, custom_font)
         f14 = _font(14, custom_font)
-        f13 = _font(13, custom_font)
         f12 = _font(12, custom_font)
+        f11 = _font(11, custom_font)
 
-        # ---- 左栏：头像 + 昵称 ----
-        frame, inner = 84, 66
-        fx, fy = 20, 30
+        # ================= 左列 base-info =================
+        # 圆形头像
+        cx_, cy_, r_ = 56, 62, 45
         avatar_path = _load_user_avatar(uid, avatar_cache, fetch_avatar)
-        draw.rounded_rectangle((fx, fy, fx + frame, fy + frame), radius=16, outline="#d4b28c", width=3)
         if avatar_path and os.path.exists(avatar_path):
             av = Image.open(avatar_path).convert("RGBA")
             side = min(av.size)
             av = av.crop(
                 ((av.width - side) // 2, (av.height - side) // 2, (av.width + side) // 2, (av.height + side) // 2)
             )
-            av = av.resize((inner, inner), Image.Resampling.LANCZOS)
-            img.paste(av, (fx + (frame - inner) // 2, fy + (frame - inner) // 2), _circle_avatar(inner))
-        nx = fx + frame + 16  # 120
+            av = av.resize((r_ * 2, r_ * 2), Image.Resampling.LANCZOS)
+            mask = Image.new("L", (r_ * 2, r_ * 2), 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, r_ * 2, r_ * 2), fill=255)
+            img.paste(av, (cx_ - r_, cy_ - r_), mask)
+        draw.ellipse((cx_ - r_, cy_ - r_, cx_ + r_, cy_ + r_), outline="#e0c49a", width=3)
+        # 昵称 + id
+        nx = 116
         name = (str(nickname) or "博士").split("#")[0] or "博士"
-        _card_text(draw, (nx, fy + 2), _fit_text(draw, name, f22, 130), f22, "#000000")
-        _card_text(draw, (nx, fy + 34), f"#{uid}", f14, "#9E9E9E", shadow=False)
+        _card_text(draw, (nx, 30), _fit_text(draw, name, f22, 168), f22, "#000000")
+        _card_text(draw, (nx, 60), f"#{uid}", f14, "#9E9E9E", shadow=False)
 
-        # ---- 中列：签到信息 ----
-        cx = 270
-        row = 38
+        # 签到四行
+        x_info = 54
         info = [
             f"最后签到日期：{user.get('sign_date') or '尚未签到'}",
             f"累计签到次数：{user.get('sign_days', 0)}",
             f"阿米娅的信赖值：{int(user.get('feeling', 0) or 0) // 10}%",
             f"阿米娅的心情值：{max(0, min(100, round(int(user.get('mood', 15) or 15) / 15 * 100)))}%",
         ]
+        y = 124
         for ln in info:
-            _card_text(draw, (cx, row), ln, f15, "#000000")
-            row += 25
+            _card_text(draw, (x_info, y), ln, f18, "#000000")
+            y += 25
         # 合成玉
         jade = int(user.get("jade", 0) or 0)
         jade_today = int(user.get("jade_today", 0) or 0)
-        _card_text(draw, (cx, row + 6), f"剩余合成玉：{jade}", f15, "#000000")
-        _card_text(draw, (cx, row + 30), f"今日已获取合成玉：{jade_today}/{jade_cap}", f14, "#000000")
-        bar_w = 175
-        _rounded_progress(draw, (cx, row + 54, cx + bar_w, row + 72), jade_today / jade_cap if jade_cap else 0)
+        _card_text(draw, (x_info, y + 5), f"剩余合成玉：{jade}", f18, "#000000")
+        _card_text(draw, (x_info, y + 30), f"今日已获取合成玉：{jade_today}/{jade_cap}", f18, "#000000")
+        _rounded_progress(draw, (x_info, y + 53, x_info + 240, y + 71), jade_today / jade_cap if jade_cap else 0)
 
-        # ---- 右列：抽卡统计 ----
-        rx = 530
-        y0 = 38
+        # ================= 右列 gacha-info =================
+        rx = 318
         n_box = len(user.get("box") or {})
         coupon = int(user.get("coupon", 0) or 0)
         break_even = int(user.get("break_even", 0) or 0)
         total = int(user.get("total", 0) or 0)
-        _card_text(draw, (rx, y0), f"干员拥有数：{n_box}", f15, "#000000")
-        _card_text(draw, (rx, y0 + 26), f"剩余寻访凭证：{coupon}", f15, "#000000")
-        prefix_w = draw.textlength("已经抽取了 ", font=f15)
-        _card_text(draw, (rx, y0 + 52), "已经抽取了 ", f15, "#000000")
-        _card_text(draw, (rx + prefix_w, y0 + 52), f"{break_even}", f15, "#e91e63")
-        _card_text(draw, (rx, y0 + 78), "次而未获得六星干员", f15, "#000000")
-        _card_text(draw, (rx, y0 + 104), f"抽卡总次数：{total}", f15, "#000000")
+        _card_text(draw, (rx, 26), f"干员拥有数：{n_box}", f16, "#000000")
+        _card_text(draw, (rx, 52), f"剩余寻访凭证：{coupon}", f16, "#000000")
+        # 将粉色数字单独着色
+        prefix = "已经抽取了 "
+        prefix_w = draw.textlength(prefix, font=f16)
+        num_w = draw.textlength(str(break_even), font=f16)
+        _card_text(draw, (rx, 78), prefix, f16, "#000000")
+        _card_text(draw, (rx + prefix_w, 78), f"{break_even}", f16, "#e91e63")
+        _card_text(draw, (rx + prefix_w + num_w, 78), " 次而未获得六星干员", f16, "#000000")
+        _card_text(draw, (rx, 104), f"抽卡总次数：{total}", f16, "#000000")
 
-        # ---- 星级分布柱状图（名称 + 条形图内百分比） ----
+        # ---- 星级条形图 ----
         stats = user.get("stats") or {}
         colors = {6: "#ee6665", 5: "#fac858", 4: "#5470c6", 3: "#67c23a"}
-        cy = y0 + 134
+        bar_x0, bar_max_w = 366, 232
+        scale50 = bar_max_w / 50.0
+        # y 轴竖排标签
+        spread = "抽卡概览统计"
+        _vt = _font(13, custom_font)
+        _vtext(draw, (332, 150), spread, _vt, "#000000")
+        # x 轴刻度
+        for i in range(6):
+            tick_x = bar_x0 + int(i * 10 * scale50)
+            _card_text(draw, (tick_x, 262), f"{i * 10}%", f11, "#000000", shadow=False)
+        draw.line((bar_x0, 258, bar_x0 + bar_max_w, 258), fill="#000000", width=1)
         if total > 0:
+            y_bar = 128
             for rarity in (6, 5, 4, 3):
                 cnt = int(stats.get(str(rarity), 0) or 0)
                 pct = cnt / total * 100
-                _card_text(draw, (rx, cy), f"{rarity}★", f13, colors[rarity], shadow=False)
-                bx = rx + 36
-                bw = 96
-                draw.rounded_rectangle((bx, cy + 1, bx + bw, cy + 15), radius=7, fill="#ffffff")
+                w = int(bar_max_w * pct / 50.0) if pct else 0
                 draw.rounded_rectangle(
-                    (bx, cy + 1, bx + max(2, int(bw * pct / 100)), cy + 15),
-                    radius=7,
-                    fill=colors[rarity],
+                    (bar_x0, y_bar, bar_x0 + max(2, w), y_bar + 18), radius=9, fill=colors[rarity]
                 )
-                pct_txt = f"{pct:.1f}%"
-                pct_w = draw.textlength(pct_txt, font=f12)
-                # 百分比优先画在填充条上（深色白字 / 浅色黑字）
-                tx = bx + bw - pct_w - 4
-                text_fill = "#ffffff" if rarity in (6, 4) else "#000000"
-                draw.text((tx + 1, cy + 1), pct_txt, font=f12, fill=text_fill)
-                draw.text((tx, cy), pct_txt, font=f12, fill=text_fill)
-                cy += 21
+                _card_text(
+                    draw, (bar_x0 + bar_max_w + 8, y_bar + 1), "★" * rarity, f12, colors[rarity], shadow=False
+                )
+                y_bar += 26
         else:
-            _card_text(draw, (rx, cy + 40), "无抽卡数据", f15, "#000000")
+            _card_text(draw, (rx, 200), "无抽卡数据", f16, "#000000")
 
-        # ---- 右缘竖条码 ----
+        # ================= 白色半透明竖条码 =================
         stripes = _barcode_stripes(uid)
-        bx2 = card_w - 12
+        bx2 = card_w - 18
         sy = 42
         for i, on in enumerate(stripes):
-            color = "#000000" if on else "#cccccc"
-            draw.rectangle((bx2, sy + i * 4, bx2 + 3, sy + i * 4 + 4), fill=color)
-        draw.rounded_rectangle((bx2 - 3, sy - 8, bx2 + 7, sy + len(stripes) * 4 + 6), radius=4, outline="#9E9E9E", width=1)
+            if on:
+                draw.rectangle((bx2, sy + i * 4, bx2 + 4, sy + i * 4 + 4), fill=(255, 255, 255, 170))
+        # 白色框（半透明感用浅灰）
+        draw.rounded_rectangle(
+            (bx2 - 3, sy - 8, bx2 + 7, sy + len(stripes) * 4 + 6), radius=4, outline=(255, 255, 255, 200), width=1
+        )
 
         out = os.path.join(avatar_cache, f"user_card_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
         os.makedirs(avatar_cache, exist_ok=True)
@@ -640,4 +661,3 @@ def render_user_card(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[arknights_fun] 用户信息卡片渲染失败: {e}")
         return None
-
