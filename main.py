@@ -350,8 +350,7 @@ class ArknightsFunPlugin(star.Star):
             text = "\n".join(parts)
         reply = event.make_result()
         if bool(self._cfg("sign_card_enabled", True)):
-            card = await asyncio.to_thread(
-                render_mod.render_user_card,
+            card = await render_mod.render_user_card(
                 uid,
                 str(event.get_sender_name() or ""),
                 user,
@@ -359,6 +358,7 @@ class ArknightsFunPlugin(star.Star):
                 str(self._cfg("gacha_image_font", "") or ""),
                 bool(self._cfg("gacha_fetch_avatar", True)),
                 int(self._cfg("jade_max", 30000) or 30000),
+                operators=self.data.operators,
             )
             if card:
                 reply.file_image(card)
@@ -372,8 +372,7 @@ class ArknightsFunPlugin(star.Star):
         """复刻 Amiya user_info：用户信息卡片图（签到/信赖/心情/合成玉/抽卡统计）。"""
         uid = str(event.get_sender_id() or "")
         user = self._user(event)
-        card = await asyncio.to_thread(
-            render_mod.render_user_card,
+        card = await render_mod.render_user_card(
             uid,
             str(event.get_sender_name() or ""),
             user,
@@ -381,6 +380,7 @@ class ArknightsFunPlugin(star.Star):
             str(self._cfg("gacha_image_font", "") or ""),
             bool(self._cfg("gacha_fetch_avatar", True)),
             int(self._cfg("jade_max", 30000) or 30000),
+            operators=self.data.operators,
         )
         reply = event.make_result()
         if card:

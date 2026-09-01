@@ -6,7 +6,12 @@
 - PIL 或素材缺失时返回 None，调用方回退纯文本。
 """
 
+import asyncio
+import base64
+import contextlib
+import json
 import logging
+import mimetypes
 import os
 import random
 import re
@@ -515,8 +520,72 @@ def _fit_text(draw, text: str, font, max_w: int) -> str:
             hi = mid - 1
     return text[:lo] + "…"
 
+_USER_CARD_TEMPLATE = os.path.join(_USER_CARD_ASSETS, "userInfo.html")
+_PLAYWRIGHT = None
+_BROWSER = None
 
-def render_user_card(
+
+async def _ensure_browser():
+    """复用进程内的 Playwright Chromium（与查询插件一致的浏览器渲染方案）。"""
+    global _PLAYWRIGHT, _BROWSER
+    if _BROWSER is not None:
+        return _BROWSER
+    from playwright.async_api import async_playwright
+
+    _PLAYWRIGHT = await async_playwright().start()
+    _BROWSER = await _PLAYWRIGHT.chromium.launch(headless=True, args=["--no-sandbox", "--disable-gpu"])
+    return _BROWSER
+
+
+def _build_card_data(uid, nickname, user, avatar_cache, fetch_avatar, operators):
+    """（同步）组装 Amiya userInfo 模板数据；模板缺失返回 (None, None)。"""
+    if not os.path.exists(_USER_CARD_TEMPLATE):
+        return None, None
+    avatar_url = ""
+    try:
+        av_path = _load_user_avatar(uid, avatar_cache, fetch_avatar)
+        if av_path and os.path.exists(av_path):
+            with open(av_path, "rb") as f:
+                raw = f.read()
+            mime = mimetypes.guess_type(av_path)[0] or "image/png"
+            avatar_url = f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[arknights_fun] 头像读取失败: {e}")
+    ops = operators or {}
+    box = user.get("box") or {}
+    box_parts = []
+    for name, cnt in box.items():
+        r = int((ops.get(name) or {}).get("rarity", 3))
+        box_parts.append(f"{name}:{r}:{cnt}")
+    data = {
+        "nickname": str(nickname),
+        "avatar": avatar_url,
+        "user": {"user_id": str(uid)},
+        "user_info": {
+            "sign_date": str(user.get("sign_date") or ""),
+            "sign_times": int(user.get("sign_days", 0) or 0),
+            "user_feeling": int(user.get("feeling", 0) or 0),
+            "user_mood": int(user.get("mood", 15) or 15),
+            "jade_point": int(user.get("jade", 0) or 0),
+            "jade_point_max": int(user.get("jade_today", 0) or 0),
+        },
+        "user_gacha_info": {
+            "coupon": int(user.get("coupon", 0) or 0),
+            "gacha_break_even": int(user.get("break_even", 0) or 0),
+        },
+        "operator_box": {"operator": "|".join(box_parts)},
+    }
+    return avatar_url, data
+
+
+def _save_png(out, shot):
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "wb") as f:
+        f.write(shot)
+    return out
+
+
+async def render_user_card(
     uid: str,
     nickname: str,
     user: dict,
@@ -524,140 +593,39 @@ def render_user_card(
     custom_font: str = "",
     fetch_avatar: bool = True,
     jade_cap: int = 30000,
+    operators: dict | None = None,
 ) -> str | None:
-    """复刻 Amiya userInfo 卡片（严格按原版 HTML/CSS 布局）：700×300 模糊背景。
+    """用 Playwright 浏览器渲染 Amiya 原版 userInfo 模板 → 截图（与查询插件一致）。
 
-    左列 base-info：圆形头像 + 昵称，下方签到四行 + 合成玉 + 进度条；
-    右列 gacha-info：抽卡统计四行 + 横向星级条形图（y 轴竖排标签 / x 轴 0~50% 刻度）；
-    最右白色半透明竖条码。字段映射：信赖值 = user.feeling（签到 +50，显示 feeling/10%）；
-    心情值 = user.mood/15*100%。
+    数据完全按 Amiya userInfo.html 的 window.init(data)：user_info / user_gacha_info /
+    operator_box / nickname / avatar。信怠值 = user.feeling（签到 +50，显示 feeling/10%）。
+    custom_font / jade_cap 参数仅为兼容旧签名保留。
     """
-    try:
-        from PIL import Image, ImageDraw, ImageFilter
-    except ImportError:
+    avatar_url, data = await asyncio.to_thread(
+        _build_card_data, uid, nickname, user, avatar_cache, fetch_avatar, operators
+    )
+    if data is None:
         return None
-    card_w, card_h = 700, 300
     try:
-        bg_path = _user_card_asset("user_info.jpeg")
-        if not os.path.exists(bg_path):
-            return None
-        bg = Image.open(bg_path).convert("RGB")
-        bg = bg.resize((card_w + 20, card_h + 20))
-        bg = bg.filter(ImageFilter.GaussianBlur(radius=14))
-        bg = bg.crop((10, 10, 10 + card_w, 10 + card_h))
-        img = bg
-        draw = ImageDraw.Draw(img)
-
-        f22 = _font(22, custom_font)
-        f18 = _font(18, custom_font)
-        f16 = _font(16, custom_font)
-        f14 = _font(14, custom_font)
-        f12 = _font(12, custom_font)
-        f11 = _font(11, custom_font)
-
-        # ================= 左列 base-info =================
-        # 圆形头像
-        cx_, cy_, r_ = 56, 62, 45
-        avatar_path = _load_user_avatar(uid, avatar_cache, fetch_avatar)
-        if avatar_path and os.path.exists(avatar_path):
-            av = Image.open(avatar_path).convert("RGBA")
-            side = min(av.size)
-            av = av.crop(
-                ((av.width - side) // 2, (av.height - side) // 2, (av.width + side) // 2, (av.height + side) // 2)
+        path_abs = await asyncio.to_thread(os.path.abspath, _USER_CARD_TEMPLATE)
+        url = "file:///" + path_abs.replace("\\", "/")
+        browser = await _ensure_browser()
+        page = await browser.new_page(viewport={"width": 720, "height": 320}, device_scale_factor=2)
+        await page.goto(url, timeout=30000)
+        await page.wait_for_load_state("load", timeout=30000)
+        await page.evaluate("if ('init' in window) { init(" + json.dumps(data) + ") }")
+        await asyncio.sleep(0.8)
+        with contextlib.suppress(Exception):
+            await page.wait_for_function(
+                "() => Array.from(document.querySelectorAll('img')).every(i => i.complete)",
+                timeout=10000,
             )
-            av = av.resize((r_ * 2, r_ * 2), Image.Resampling.LANCZOS)
-            mask = Image.new("L", (r_ * 2, r_ * 2), 0)
-            ImageDraw.Draw(mask).ellipse((0, 0, r_ * 2, r_ * 2), fill=255)
-            img.paste(av, (cx_ - r_, cy_ - r_), mask)
-        draw.ellipse((cx_ - r_, cy_ - r_, cx_ + r_, cy_ + r_), outline="#e0c49a", width=3)
-        # 昵称 + id
-        nx = 116
-        name = (str(nickname) or "博士").split("#")[0] or "博士"
-        _card_text(draw, (nx, 30), _fit_text(draw, name, f22, 168), f22, "#000000")
-        _card_text(draw, (nx, 60), f"#{uid}", f14, "#9E9E9E", shadow=False)
-
-        # 签到四行
-        x_info = 54
-        info = [
-            f"最后签到日期：{user.get('sign_date') or '尚未签到'}",
-            f"累计签到次数：{user.get('sign_days', 0)}",
-            f"阿米娅的信赖值：{int(user.get('feeling', 0) or 0) // 10}%",
-            f"阿米娅的心情值：{max(0, min(100, round(int(user.get('mood', 15) or 15) / 15 * 100)))}%",
-        ]
-        y = 124
-        for ln in info:
-            _card_text(draw, (x_info, y), ln, f18, "#000000")
-            y += 25
-        # 合成玉
-        jade = int(user.get("jade", 0) or 0)
-        jade_today = int(user.get("jade_today", 0) or 0)
-        _card_text(draw, (x_info, y + 5), f"剩余合成玉：{jade}", f18, "#000000")
-        _card_text(draw, (x_info, y + 30), f"今日已获取合成玉：{jade_today}/{jade_cap}", f18, "#000000")
-        _rounded_progress(draw, (x_info, y + 53, x_info + 240, y + 71), jade_today / jade_cap if jade_cap else 0)
-
-        # ================= 右列 gacha-info =================
-        rx = 318
-        n_box = len(user.get("box") or {})
-        coupon = int(user.get("coupon", 0) or 0)
-        break_even = int(user.get("break_even", 0) or 0)
-        total = int(user.get("total", 0) or 0)
-        _card_text(draw, (rx, 26), f"干员拥有数：{n_box}", f16, "#000000")
-        _card_text(draw, (rx, 52), f"剩余寻访凭证：{coupon}", f16, "#000000")
-        # 将粉色数字单独着色
-        prefix = "已经抽取了 "
-        prefix_w = draw.textlength(prefix, font=f16)
-        num_w = draw.textlength(str(break_even), font=f16)
-        _card_text(draw, (rx, 78), prefix, f16, "#000000")
-        _card_text(draw, (rx + prefix_w, 78), f"{break_even}", f16, "#e91e63")
-        _card_text(draw, (rx + prefix_w + num_w, 78), " 次而未获得六星干员", f16, "#000000")
-        _card_text(draw, (rx, 104), f"抽卡总次数：{total}", f16, "#000000")
-
-        # ---- 星级条形图 ----
-        stats = user.get("stats") or {}
-        colors = {6: "#ee6665", 5: "#fac858", 4: "#5470c6", 3: "#67c23a"}
-        bar_x0, bar_max_w = 366, 232
-        scale50 = bar_max_w / 50.0
-        # y 轴竖排标签
-        spread = "抽卡概览统计"
-        _vt = _font(13, custom_font)
-        _vtext(draw, (332, 150), spread, _vt, "#000000")
-        # x 轴刻度
-        for i in range(6):
-            tick_x = bar_x0 + int(i * 10 * scale50)
-            _card_text(draw, (tick_x, 262), f"{i * 10}%", f11, "#000000", shadow=False)
-        draw.line((bar_x0, 258, bar_x0 + bar_max_w, 258), fill="#000000", width=1)
-        if total > 0:
-            y_bar = 128
-            for rarity in (6, 5, 4, 3):
-                cnt = int(stats.get(str(rarity), 0) or 0)
-                pct = cnt / total * 100
-                w = int(bar_max_w * pct / 50.0) if pct else 0
-                draw.rounded_rectangle(
-                    (bar_x0, y_bar, bar_x0 + max(2, w), y_bar + 18), radius=9, fill=colors[rarity]
-                )
-                _card_text(
-                    draw, (bar_x0 + bar_max_w + 8, y_bar + 1), "★" * rarity, f12, colors[rarity], shadow=False
-                )
-                y_bar += 26
-        else:
-            _card_text(draw, (rx, 200), "无抽卡数据", f16, "#000000")
-
-        # ================= 白色半透明竖条码 =================
-        stripes = _barcode_stripes(uid)
-        bx2 = card_w - 18
-        sy = 42
-        for i, on in enumerate(stripes):
-            if on:
-                draw.rectangle((bx2, sy + i * 4, bx2 + 4, sy + i * 4 + 4), fill=(255, 255, 255, 170))
-        # 白色框（半透明感用浅灰）
-        draw.rounded_rectangle(
-            (bx2 - 3, sy - 8, bx2 + 7, sy + len(stripes) * 4 + 6), radius=4, outline=(255, 255, 255, 200), width=1
-        )
-
+        shot = await page.screenshot(clip={"x": 0, "y": 0, "width": 700, "height": 300})
+        await page.close()
         out = os.path.join(avatar_cache, f"user_card_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
-        os.makedirs(avatar_cache, exist_ok=True)
-        img.save(out, "PNG")
+        await asyncio.to_thread(_save_png, out, shot)
         return out
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"[arknights_fun] 用户信息卡片渲染失败: {e}")
+        logger.warning(f"[arknights_fun] 用户信息卡片浏览器渲染失败: {e}")
         return None
+
