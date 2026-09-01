@@ -2,11 +2,13 @@
 (function () {
   "use strict";
 
-  var bridge = window.AstrBotPluginPage;
-  if (!bridge) {
-    document.body.innerHTML = "<p style='padding:24px'>桥接不可用：请在 AstrBot 内置 WebUI 的插件页面中打开。</p>";
-    return;
-  }
+  // 桥接 SDK 由 AstrBot 注入（页面 head 已显式引用，或兜底追加到 body 末尾）。
+  // 统一等待其就绪后再初始化，避免同步检查时 SDK 尚未来得及加载。
+  function start() {
+    var bridge = window.AstrBotPluginPage;
+    if (!bridge) {
+      return false;
+    }
 
   function unwrap(r) {
     if (r && (r.ok === false || r.status === "error")) {
@@ -238,4 +240,21 @@
 
   switchTab("overview");
   loadAll();
+    return true;
+  }
+
+  function waitBridge(tries) {
+    if (start()) return;
+    if (tries <= 0) {
+      document.body.innerHTML = "<p style='padding:24px'>桥接不可用：请在 AstrBot 内置 WebUI 的插件页面中打开。</p>";
+      return;
+    }
+    setTimeout(function () { waitBridge(tries - 1); }, 200);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () { waitBridge(20); });
+  } else {
+    waitBridge(20);
+  }
 })();
