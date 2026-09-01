@@ -554,30 +554,35 @@ class ArknightsFunPlugin(star.Star):
                         str(self._cfg("gacha_image_font", "") or ""),
                     )
             else:
-                # Amiya detailed_mode（≤9 抽）：简历文本 + 保底信息（AstrBot 以拼图替代阿米娅的头像图标）
-                result_text = f"阿米娅给博士扔来了{times}张简历，博士细细地检阅着...\n\n【{pool}】\n\n"
-                for r in results:
-                    result_text += (
-                        f"{' ' * 15}{_insert_empty(r['name'], 6, True)}{self._star(r['rarity'])}\n\n"
-                    )
-                text = result_text + "\n" + self._check_break_even(user)
+                # Amiya detailed_mode（1~9 抽）：文字转图片（text_image：浅灰底 + 头像图标 + 彩色星级）
                 if bool(self._cfg("gacha_render_image", True)):
                     img = await asyncio.to_thread(
-                        render_mod.render_pulls,
+                        render_mod.render_detailed,
                         self.data,
                         results,
+                        times,
                         pool,
+                        self._check_break_even(user),
                         AVATAR_CACHE,
                         bool(self._cfg("gacha_fetch_avatar", True)),
                         str(self._cfg("gacha_image_font", "") or ""),
+                    )
+                if not img:
+                    # 图片渲染失败时回退文本
+                    text = render_mod.build_detailed_text(
+                        results, times, pool, self._check_break_even(user), colored=False
                     )
         else:
             # Amiya continuous_mode（>10 抽）：统计文本（无图）
             text = self._format_continuous(results, times, pool) + "\n" + self._check_break_even(user)
         result = event.make_result()
-        if img:
+        if img and times < 10:
+            # 与原版一致：1~9 抽只发文字图，列表与保底信息已在图内
             result.file_image(img)
-        result.message(text)
+        else:
+            if img:
+                result.file_image(img)
+            result.message(text)
         event.stop_event()
         yield result
 

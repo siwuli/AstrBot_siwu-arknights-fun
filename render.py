@@ -9,6 +9,7 @@
 import logging
 import os
 import random
+import re
 import time
 import urllib.request
 
@@ -27,6 +28,7 @@ _AVATAR_URL = (
 )
 
 _FONT_CANDIDATES = [
+    os.path.join(ASSETS_DIR, "font", "HarmonyOS_Sans_SC.ttf"),
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/msyhbd.ttc",
     "C:/Windows/Fonts/simhei.ttf",
@@ -98,7 +100,7 @@ def render_pulls(
 ) -> str | None:
     """复刻 Amiya create_gacha_image：背景 + 边框 + 立绘 + 职业图标，0.8 倍缩放。
 
-    不足 10 抽时裁掉背景右侧未使用区域，保留 Amiya 左侧版式。
+    注意：仅十连调用本函数；1~9 抽走 render_detailed（text_image 样式）。
     """
     try:
         from PIL import Image, ImageDraw
@@ -114,7 +116,6 @@ def render_pulls(
         image = Image.open(bg_path)
         draw = ImageDraw.ImageDraw(image)
         x = 78
-        used = 0
         for r in results[:10]:
             rarity = int(r["rarity"])
             frame = os.path.join(GACHA_ASSETS, f"{rarity}.png")
@@ -140,10 +141,6 @@ def render_pulls(
                 img = Image.open(class_img).convert("RGBA").resize((59, 59))
                 image.paste(img, box=(x + 11, 322), mask=img)
             x += 82
-            used += 1
-        if used < 10:
-            width = 78 + 82 * used
-            image = image.crop((0, 0, width, image.size[1]))
         w, h = image.size
         image = image.resize((int(w * 0.8), int(h * 0.8)), Image.Resampling.LANCZOS)
         os.makedirs(cache_dir, exist_ok=True)
@@ -219,3 +216,191 @@ def render_box(data: GameData, box: dict[str, int], cache_dir: str, custom_font:
     out = os.path.join(cache_dir, f"box_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
     img.save(out, "PNG")
     return out
+
+_RARITY_COLOR = {6: "FF4343", 5: "FEA63A", 4: "A288B5", 3: "7F7F7F", 2: "7F7F7F", 1: "7F7F7F"}
+_TI_FONT_SIZE = 15
+_TI_LINE_HEIGHT = 16
+_TI_PADDING = 10
+_TI_BGCOLOR = "#F5F5F5"
+
+
+def _insert_empty(text, max_num: int, half: bool = False) -> str:
+    """复刻 Amiya core.util.insert_empty：右补空格到指定宽度。"""
+    return f"{text}{('　' if half else ' ') * (max_num - len(str(text)))}"
+
+
+def _char_width(draw, char, font) -> int:
+    bbox = draw.multiline_textbbox((0, 0), char, font=font)
+    return bbox[2] - bbox[0]
+
+
+def _parse_text_rows(text: str, font, fill_color: str = "#000000"):
+    """复刻 Amiya TextParser：解析 [cl xxx@#RRGGBB cle] 彩色标记并分行。
+
+    返回 (rows, line, width_seat)：rows 为 {text,color,width,enter} 字典列表。
+    """
+    from PIL import Image, ImageDraw
+
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    search = re.findall(r"\[cl\s(.*?)@#(.*?)\scle]", text)
+    color_pos = {0: fill_color}
+    for item in search:
+        temp = f"[cl {item[0]}@#{item[1]} cle]"
+        index = text.index(temp)
+        color_pos[index] = f"#{item[1]}"
+        color_pos[index + len(item[0])] = fill_color
+        text = text.replace(temp, item[0], 1)
+    rows = []
+    line = 0
+    width_seat = 0
+    length = 0
+    sub_text = ""
+    cur_color = fill_color
+    for idx, char in enumerate(text):
+        if idx in color_pos:
+            if cur_color != color_pos[idx] and sub_text:
+                rows.append({"text": sub_text, "color": cur_color, "width": length, "enter": False})
+                sub_text = ""
+                length = 0
+            cur_color = color_pos[idx]
+        length += _char_width(draw, char, font)
+        sub_text += char
+        width_seat = max(width_seat, length)
+        is_end = idx == len(text) - 1
+        if length >= float("inf") or char == "\n" or is_end:
+            enter = True
+            if not is_end and text[idx + 1] == "\n" and char != "\n":
+                enter = False
+            if enter:
+                line += 1
+            rows.append({"text": sub_text, "color": cur_color, "width": length, "enter": enter})
+            sub_text = ""
+            length = 0
+    return rows, line, width_seat
+
+
+def _create_text_image(text: str, icons, custom_font: str = ""):
+    """复刻 amiyabot imageCreator.create_image（Chain.text_image 的默认参数）。"""
+    from PIL import Image, ImageDraw
+
+    font = _font(_TI_FONT_SIZE, custom_font)
+    rows, line, width_seat = _parse_text_rows(text, font)
+    width = width_seat + _TI_PADDING * 2 + 50
+    height = (line + 2) * _TI_LINE_HEIGHT
+    image = Image.new("RGB", (width, height), _TI_BGCOLOR)
+    draw = ImageDraw.Draw(image)
+    row = 0
+    col = _TI_PADDING
+    for item in rows:
+        draw.text(
+            (col, _TI_PADDING + row * _TI_LINE_HEIGHT),
+            item["text"],
+            font=font,
+            fill=item["color"],
+        )
+        col += item["width"]
+        if item["enter"]:
+            row += 1
+            col = _TI_PADDING
+    for path, size, pos in icons:
+        if not path or not os.path.exists(path):
+            continue
+        img = Image.open(path).convert("RGBA")
+        pos = [int(n if n >= 0 else width + n) for n in pos]
+        item_width = int(size * (img.width / img.height))
+        item_height = size
+        offset_x = (item_height - item_width) / 2
+        if offset_x:
+            pos[0] += int(offset_x)
+        img = img.resize(size=(item_width, item_height))
+        image.paste(img, box=(pos[0], pos[1]), mask=img)
+    return image
+
+
+def build_detailed_text(
+    results: list[dict],
+    times: int,
+    pool_name: str,
+    check_break_even: str,
+    colored: bool = False,
+) -> str:
+    """复刻 Amiya GachaBuilder.detailed_mode 的简历文本（colored=True 含 [cl] 彩色标记）。"""
+    result = f"阿米娅给博士扔来了{times}张简历，博士细细地检阅着...\n\n【{pool_name}】\n\n"
+    for item in results:
+        name = str(item["name"])
+        rarity = int(item["rarity"])
+        if colored:
+            star = f"[cl {'★' * rarity}@#{_RARITY_COLOR.get(rarity, '7F7F7F')} cle]"
+        else:
+            star = "★" * rarity
+        result += f"{' ' * 15}{_insert_empty(name, 6, True)}{star}\n\n"
+    result += f"\n{check_break_even}"
+    return result
+
+
+def _op_icon(data: GameData, name: str, cache_dir: str, fetch: bool) -> str | None:
+    """返回干员头像路径：与 Amiya detailed_mode 一致（头像优先，其次立绘/按需下载）。"""
+    op = data.operators.get(name)
+    oid = str((op or {}).get("id") or "")
+    if not oid:
+        return None
+    for p in (
+        os.path.join(AVATAR_DIR, f"{oid}#1.png"),
+        os.path.join(PORTRAIT_DIR, f"{oid}#1.png"),
+        os.path.join(cache_dir, f"{oid}.png") if cache_dir else "",
+    ):
+        if p and os.path.exists(p):
+            return p
+    if fetch and cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        target = os.path.join(cache_dir, f"{oid}.png")
+        try:
+            req = urllib.request.Request(
+                _AVATAR_URL.format(oid=oid),
+                headers={"User-Agent": "Mozilla/5.0 (AstrBot arknights_fun)"},
+            )
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                raw = resp.read()
+            with open(target, "wb") as f:
+                f.write(raw)
+            return target
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[arknights_fun] 头像下载失败 {name}: {e}")
+    return None
+
+
+def render_detailed(
+    data: GameData,
+    results: list[dict],
+    times: int,
+    pool_name: str,
+    check_break_even: str,
+    cache_dir: str,
+    fetch: bool = True,
+    custom_font: str = "",
+) -> str | None:
+    """复刻 Amiya detailed_mode：1~9 抽的 text_image（浅灰底文字列表 + 左侧头像图标）。
+
+    图片宽度自适应文本，高度 = (文本行数 + 2) * 16；星级按稀有度着色。
+    """
+    try:
+        from PIL import Image, ImageDraw  # noqa: F401
+    except ImportError:
+        return None
+    text = build_detailed_text(results, times, pool_name, check_break_even, colored=True)
+    icons = []
+    icon_size = 32
+    offset = int((_TI_LINE_HEIGHT * 3 - icon_size) / 2)
+    top = _TI_PADDING + _TI_LINE_HEIGHT * 2 + offset + 5
+    for index, r in enumerate(results):
+        icon = _op_icon(data, str(r["name"]), cache_dir, fetch)
+        icons.append((icon, icon_size, (_TI_PADDING, top + offset + icon_size * index)))
+    try:
+        image = _create_text_image(text, icons, custom_font)
+        os.makedirs(cache_dir, exist_ok=True)
+        out = os.path.join(cache_dir, f"pulls_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
+        image.save(out, "PNG")
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[arknights_fun] 抽卡文字图渲染失败: {e}")
+        return None
