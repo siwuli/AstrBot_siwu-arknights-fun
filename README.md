@@ -4,7 +4,7 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 玩法对齐 Amiya-Bot 生态（amiyabot-user 签到、arknights-gacha 抽卡、game-guess 猜干员），
 但收敛进**同一个插件**，数据自包含、零跨插件耦合、开箱即用。
 
-> 插件 id：`arknights_fun`　当前版本：`1.1.0`　适用 AstrBot `>=4.0.0`
+> 插件 id：`arknights_fun`　当前版本：`1.2.0`　适用 AstrBot `>=4.0.0`
 
 ## 经济闭环
 
@@ -54,6 +54,17 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 - 下载前/失败时使用内置资产兜底（`assets/operators.json` + `assets/pools.json`），
   任何环境开箱即用。
 
+## 管理后台（AstrBot 内置 WebUI）
+
+安装后，在 **AstrBot 管理面板 → 插件页面** 中打开 `arknights_fun` 的管理后台（`dashboard`），可：
+
+- 📊 概览：用户数、累计抽数、发放凭证/合成玉、数据状态（excel 文件数、上次更新、干员/卡池/语音规模）；
+- 👥 用户管理：按累计抽数排序的用户列表，支持调整凭证/合成玉、重置保底水位、删除用户（用于补发签到奖励、修正数据等）；
+- 🗄️ 数据维护：一键触发 gamedata 增量更新（与定时更新共用互斥锁）；
+- 🔮 卡池：查看当前加载的真实卡池与 UP 名单。
+
+页面前后端均随插件打包分发，无需额外安装依赖。
+
 ## 配置项（管理面板或 AstrBot 配置界面）
 
 | 配置 | 默认 | 说明 |
@@ -79,7 +90,7 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 ## 安装
 
 1. 打包：`python plugins/astrbot/siwu-arknights-fun-1_0/build.py`
-2. 产物：`plugins/astrbot/dist/siwu-arknights-fun-1.1.0.zip`
+2. 产物：`plugins/astrbot/dist/siwu-arknights-fun-1.2.0.zip`
 3. 管理面板上传安装，或解压到 `data/plugins/arknights_fun/` 后重启 AstrBot。
 
 > 升级提示：若之前单独装过 `arknights_gacha` / `guess_operator` 旧插件，

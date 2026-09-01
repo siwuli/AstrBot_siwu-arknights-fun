@@ -28,6 +28,7 @@ from astrbot.api.event import filter
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from . import render as render_mod
+from .admin_web import ArknightsFunWebAdmin
 from .gacha import JADE_PER_PULL, PULL_RE, GachaEngine, parse_pull_count
 from .gamedata import (
     EXCEL_DIR,
@@ -94,6 +95,7 @@ class ArknightsFunPlugin(star.Star):
         self._load_users()
         self._migrate_legacy()
         self._start_download_if_needed()
+        self._register_admin_web(context)
 
     # ------------------------------------------------------------------
     # 用户数据（统一经济）
@@ -736,6 +738,53 @@ class ArknightsFunPlugin(star.Star):
         )
         if handled:
             event.stop_event()
+
+    # ------------------------------------------------------------------
+    # 管理后台（AstrBot WebUI 插件页面）
+    # ------------------------------------------------------------------
+    def _register_admin_web(self, context) -> None:
+        try:
+            self._web_admin = ArknightsFunWebAdmin(self)
+            self._web_admin.register_routes(context)
+            logger.info(f"{LOG_TAG} 管理后台页面已注册到 AstrBot WebUI")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"{LOG_TAG} 管理后台注册失败: {e}")
+
+    def _admin_adjust_user(self, uid: str, coupon_delta: int, jade_delta: int) -> str | None:
+        """管理后台调整用户资源；返回错误文案（None 表示成功）。"""
+        if not uid:
+            return "缺少用户 ID"
+        if coupon_delta == 0 and jade_delta == 0:
+            return "调整值不能为 0"
+        with _user_lock:
+            user = self._users.get(uid)
+            if user is None:
+                return "用户不存在"
+            user["coupon"] = max(0, int(user.get("coupon", 0)) + int(coupon_delta))
+            user["jade"] = max(0, int(user.get("jade", 0)) + int(jade_delta))
+            self._save_users()
+        return None
+
+    def _admin_reset_pity(self, uid: str) -> str | None:
+        if not uid:
+            return "缺少用户 ID"
+        with _user_lock:
+            user = self._users.get(uid)
+            if user is None:
+                return "用户不存在"
+            user["break_even"] = 0
+            self._save_users()
+        return None
+
+    def _admin_delete_user(self, uid: str) -> str | None:
+        if not uid:
+            return "缺少用户 ID"
+        with _user_lock:
+            if uid not in self._users:
+                return "用户不存在"
+            del self._users[uid]
+            self._save_users()
+        return None
 
     async def terminate(self):
         """卸载时清理游戏会话与后台任务。"""

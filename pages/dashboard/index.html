@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>兔兔方舟 · 管理后台</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="logo">🐰</span>
+        <span>兔兔方舟</span>
+      </div>
+      <ul class="nav-list">
+        <li class="nav-item active" data-tab="overview"><span>📊</span><span>概览</span></li>
+        <li class="nav-item" data-tab="users"><span>👥</span><span>用户管理</span></li>
+        <li class="nav-item" data-tab="data"><span>🗄️</span><span>数据维护</span></li>
+        <li class="nav-item" data-tab="pools"><span>🔮</span><span>卡池</span></li>
+      </ul>
+    </aside>
+    <main id="content">
+      <header class="topbar">
+        <h1 id="pageTitle">概览</h1>
+        <button class="btn ghost" id="refreshBtn">🔄 刷新</button>
+      </header>
+
+      <section id="tab-overview" class="tab-page">
+        <div class="stat-grid" id="statGrid"></div>
+        <div class="card">
+          <h3>数据状态</h3>
+          <div class="kv-grid" id="dataStatus"></div>
+        </div>
+        <div class="card">
+          <h3>数据维护</h3>
+          <p class="hint">点击按钮立即检查并更新 gamedata（与远端比对，只下载变化的表）。</p>
+          <button class="btn primary" id="updateDataBtn">⚡ 立即更新数据</button>
+          <span id="updateResult" class="hint inline"></span>
+        </div>
+      </section>
+
+      <section id="tab-users" class="tab-page" hidden>
+        <div class="card">
+          <h3>用户列表（按累计抽数排序）</h3>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>凭证</th><th>合成玉</th><th>累计抽数</th>
+                <th>保底</th><th>BOX</th><th>签到达</th><th>猜分</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="usersBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tab-data" class="tab-page" hidden>
+        <div class="card">
+          <h3>数据维护</h3>
+          <p class="hint">gamedata 公共目录：{数据目录}/resource/gamedata，抽卡与猜干员共用，自动增量更新。</p>
+          <button class="btn primary" id="updateDataBtn2">⚡ 立即更新数据</button>
+          <span id="updateResult2" class="hint inline"></span>
+        </div>
+      </section>
+
+      <section id="tab-pools" class="tab-page" hidden>
+        <div class="card">
+          <h3>可用卡池</h3>
+          <table class="data-table">
+            <thead><tr><th>#</th><th>卡池名</th><th>ID</th><th>6★UP</th><th>5★UP</th></tr></thead>
+            <tbody id="poolsBody"></tbody>
+          </table>
+          <p class="hint">新版官方卡池可能无 UP 数据，可在插件配置 gacha_pickup_6 / gacha_pickup_5 指定。</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="adjustModal" hidden>
+    <div class="modal">
+      <div class="modal-title">调整资源</div>
+      <div class="form-group">
+        <label>用户 ID</label>
+        <span id="adjustUid" class="mono"></span>
+      </div>
+      <div class="form-group">
+        <label>寻访凭证变动（可为负）</label>
+        <input id="adjustCoupon" type="number" value="0" />
+      </div>
+      <div class="form-group">
+        <label>合成玉变动（可为负）</label>
+        <input id="adjustJade" type="number" value="0" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="adjustCancel">取消</button>
+        <button class="btn primary" id="adjustConfirm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="./app.js"></script>
+</body>
+</html>
