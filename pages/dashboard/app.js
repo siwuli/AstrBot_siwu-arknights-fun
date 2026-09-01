@@ -11,10 +11,12 @@
     }
 
   function unwrap(r) {
+    // 注意：WebUI 父页面（PluginPagePage.vue）已把 axios 响应解一层，
+    // 传给 iframe 的 r 就是插件 handler 返回 json_response 中的 data 字段。
+    // 因此这里直接返回 r，不再二次解包，否则 bootstrap 的 summary 会丢失。
     if (r && (r.ok === false || r.status === "error")) {
       throw new Error((r && r.message) || "请求失败");
     }
-    if (r && typeof r === "object" && "data" in r) return r.data;
     return r;
   }
 
