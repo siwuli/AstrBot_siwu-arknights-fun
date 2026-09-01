@@ -610,7 +610,7 @@ async def render_user_card(
         path_abs = await asyncio.to_thread(os.path.abspath, _USER_CARD_TEMPLATE)
         url = "file:///" + path_abs.replace("\\", "/")
         browser = await _ensure_browser()
-        page = await browser.new_page(viewport={"width": 700, "height": 300}, device_scale_factor=2)
+        page = await browser.new_page(viewport={"width": 700, "height": 320}, device_scale_factor=2)
         await page.goto(url, timeout=30000)
         await page.wait_for_load_state("load", timeout=30000)
         await page.evaluate("if ('init' in window) { init(" + json.dumps(data) + ") }")
@@ -620,7 +620,7 @@ async def render_user_card(
                 "() => Array.from(document.querySelectorAll('img')).every(i => i.complete)",
                 timeout=10000,
             )
-        shot = await page.screenshot(clip={"x": 0, "y": 0, "width": 700, "height": 300})
+        shot = await page.screenshot(full_page=True)
         await page.close()
         out = os.path.join(avatar_cache, f"user_card_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
         await asyncio.to_thread(_save_png, out, shot)

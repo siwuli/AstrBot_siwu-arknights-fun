@@ -6,6 +6,7 @@
 
 body {
     margin: 0;
+    background: #241a38;
 }
 
 #template {
@@ -66,14 +67,14 @@ body {
 }
 
 .info {
-    margin: 20px 0;
+    margin: 12px 0;
 }
 
 .jade-point {
     height: 20px;
     border: 1px solid #e91e63;
     border-radius: 20px;
-    margin-top: 5px;
+    margin-top: 3px;
     overflow: hidden;
 }
 
@@ -94,8 +95,8 @@ body {
 }
 
 .pie {
-    height: 180px;
-    margin-top: 20px;
+    height: 160px;
+    margin-top: 12px;
 }
 
 .no-chat {

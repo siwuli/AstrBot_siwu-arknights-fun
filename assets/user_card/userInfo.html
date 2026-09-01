@@ -19,8 +19,8 @@
                     <img :src="data.avatar || './avatar.webp'" :alt="data.nickname">
                 </div>
                 <div class="nickname">
-                    <div style="font-size: 22px">{{ nickname }}</div>
-                    <div style="font-size: 14px; color: #9E9E9E">{{ idx }}</div>
+                    <div style="font-size: 22px; max-width: 150px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block;">{{ nickname }}</div>
+                    <div style="font-size: 14px; color: #9E9E9E; max-width: 150px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block;">{{ idx }}</div>
                 </div>
             </div>
             <div class="info">
