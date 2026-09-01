@@ -55,12 +55,14 @@ def cn_to_int(s: str) -> int | None:
 
 
 _CN = f"[{_CN_TOKENS}]"
+# 严格抽卡触发：数量后必须紧跟「连/抽/次寻访」等抽卡词（不含裸“次”，
+# 否则“第一次/第三次”这种日常用语会被误判成 1 次抽卡而触发单抽）。
+# 原版 Amiya 只认阿拉伯数字，这里保留中文数字但锚定抽卡词。
 PULL_RE = re.compile(
-    rf"(?:(?:\d+|{_CN}+)\s*(?:连|抽|次)(?:寻访|连)?)"
+    rf"(?:单抽|十连)"
+    rf"|(?:(?:\d+|{_CN}+)\s*(?:连抽|连|抽|次\s*寻访))"
     rf"|(?:(?:抽|寻访)\s*(?:\d+|{_CN}+)\s*(?:次|连)?)"
-    rf"|(?:(?:抽卡|来)\s*(?:\d+|{_CN}+))"
-    rf"|单抽"
-    rf"|十连",
+    rf"|(?:(?:抽卡|来)\s*(?:\d+|{_CN}+))",
 )
 
 
@@ -82,6 +84,41 @@ def parse_pull_count(text: str) -> int | None:
         return None
     cnt = nm.group(1)
     return int(cnt) if cnt.isdigit() else cn_to_int(cnt)
+
+
+# 抽卡意图闸门：整个消息须为「引导词 + 抽卡短语 + 语气词」结构，杜绝闲聊误触。
+# 抽卡短语本身仍由 PULL_RE 提取次数（filter.regex 负责命中入口）。
+_LEAD_RE = re.compile(
+    r"^(?:兔兔|阿米娅|echo|小兔|宝宝|机器人|bot)?[，,：:、\s]*"
+    r"(?:来|给我|帮我|我想|我要|想|试试|来一发|给我来|来点)?[，,：:、\s]*",
+)
+_STRICT_PULL = re.compile(
+    rf"^{_LEAD_RE.pattern}"
+    rf"(?:(?:单抽|十连)"
+    rf"|(?:(?:\d+|{_CN}+)\s*(?:连抽|连|抽|次\s*寻访))"
+    rf"|(?:(?:抽|寻访)\s*(?:\d+|{_CN}+)\s*(?:次|连)?)"
+    rf"|(?:(?:抽卡|来)\s*(?:\d+|{_CN}+)\s*(?:连|抽|次)?))"
+    rf"[，,。！!？?\s]*(?:试试|吧|嘛|呢|啊|啦|欧|好运|欧气|一发)?[，,。！!？?\s]*$",
+)
+
+
+def pull_request_of(text: str) -> int | None:
+    """严格判定消息是否为抽卡请求：是则返回抽卡次数，否则返回 None。
+
+    配合 filter.regex 使用，防止闲聊误触：
+    - 数量后必须带「连/抽/次寻访」抽卡词（裸“次”不算，杜绝“第一次”→单抽）；
+    - 超长或结构不符的消息（如“这个十连抽卡视频很好笑”）整句校验不通过，
+      handlers 直接静默返回，不回复任何内容；
+    - 先剥离称呼/引导词再取次数，避免“来一发十连”被“来一”抢先解析成 1 次。
+    """
+    t = (text or "").strip()
+    if not t or not _STRICT_PULL.fullmatch(t):
+        return None
+    core = _LEAD_RE.sub("", t)
+    count = parse_pull_count(core)
+    if count is None:
+        count = parse_pull_count(t)  # “来 100 / 抽卡 100”这类纯数字引导句
+    return count
 
 
 def _weight(pickups: str) -> dict[str, int]:

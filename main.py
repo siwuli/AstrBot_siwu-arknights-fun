@@ -29,7 +29,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from . import render as render_mod
 from .admin_web import ArknightsFunWebAdmin
-from .gacha import JADE_PER_PULL, PULL_RE, GachaEngine, parse_pull_count
+from .gacha import JADE_PER_PULL, PULL_RE, GachaEngine, parse_pull_count, pull_request_of
 from .gamedata import (
     EXCEL_DIR,
     POOLS_CACHE,
@@ -404,9 +404,9 @@ class ArknightsFunPlugin(star.Star):
     @filter.regex(PULL_RE.pattern)
     async def cmd_pull_text(self, event: AstrMessageEvent):
         text = event.get_message_str().strip()
-        count = parse_pull_count(text)
+        count = pull_request_of(text)
         if count is None:
-            return
+            return  # 闲聊误触：静默不回复
         async for r in self._gacha(event, count):
             yield r
 
