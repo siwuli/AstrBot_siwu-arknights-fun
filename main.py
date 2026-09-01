@@ -81,6 +81,10 @@ def _default_user(config: AstrBotConfig) -> dict:
         "box": {},
         "total": 0,
         "guess_score": 0,
+        "feeling": 0,
+        "mood": 15,
+        "jade_today": 0,
+        "jade_today_date": "",
     }
 
 
@@ -142,6 +146,11 @@ class ArknightsFunPlugin(star.Star):
         current = int(user.get("jade", 0) or 0)
         granted = amount if cap <= 0 else max(0, min(amount, cap - current))
         user["jade"] = current + granted
+        today = time.strftime("%Y-%m-%d")
+        if user.get("jade_today_date") != today:
+            user["jade_today_date"] = today
+            user["jade_today"] = 0
+        user["jade_today"] = int(user.get("jade_today", 0) or 0) + granted
         return granted
 
     async def _grant_jade(self, uid: str, jade: int) -> None:
@@ -325,18 +334,61 @@ class ArknightsFunPlugin(star.Star):
             gained = self._add_jade(user, jade)
             user["sign_date"] = today
             user["sign_days"] = int(user.get("sign_days", 0)) + 1
+            user["feeling"] = int(user.get("feeling", 0) or 0) + int(self._cfg("sign_feeling", 50) or 0)
+            user["mood"] = 15
             result.update(ok=True, coupon=coupon, jade=gained)
 
         user = self._with_user(uid, fn)
         if not result["ok"]:
-            yield self._send(event, "博士今天已经签到了哦，明天再来吧~ (>ω<)")
-            return
-        title = str(self._cfg("fun_user_title", "博士"))
-        lines = [f"签到成功！{result['coupon']} 张寻访凭证已经送到{title}的办公室啦，请{title}注意查收哦~"]
-        if result["jade"] > 0:
-            lines.append(f"另有 {result['jade']} 合成玉入库（当前 {user['jade']}）")
-        lines.append(f"当前寻访凭证：{user['coupon']} 张")
-        yield self._send(event, "\n".join(lines))
+            text = "博士今天已经签到了哦，明天再来吧~ (>ω<)"
+        else:
+            title = str(self._cfg("fun_user_title", "博士"))
+            parts = [f"签到成功！{result['coupon']} 张寻访凭证已经送到{title}的办公室啦，请{title}注意查收哦~"]
+            if result["jade"] > 0:
+                parts.append(f"另有 {result['jade']} 合成玉入库（当前 {user['jade']}）")
+            parts.append(f"当前寻访凭证：{user['coupon']} 张")
+            text = "\n".join(parts)
+        reply = event.make_result()
+        if bool(self._cfg("sign_card_enabled", True)):
+            card = await asyncio.to_thread(
+                render_mod.render_user_card,
+                uid,
+                str(event.get_sender_name() or ""),
+                user,
+                AVATAR_CACHE,
+                str(self._cfg("gacha_image_font", "") or ""),
+                bool(self._cfg("gacha_fetch_avatar", True)),
+                int(self._cfg("jade_max", 30000) or 30000),
+            )
+            if card:
+                reply.file_image(card)
+        reply.message(text)
+        event.stop_event()
+        yield reply
+
+    @filter.command("我的信息")
+    @filter.command("个人信息")
+    async def cmd_user_info(self, event: AstrMessageEvent):
+        """复刻 Amiya user_info：用户信息卡片图（签到/信赖/心情/合成玉/抽卡统计）。"""
+        uid = str(event.get_sender_id() or "")
+        user = self._user(event)
+        card = await asyncio.to_thread(
+            render_mod.render_user_card,
+            uid,
+            str(event.get_sender_name() or ""),
+            user,
+            AVATAR_CACHE,
+            str(self._cfg("gacha_image_font", "") or ""),
+            bool(self._cfg("gacha_fetch_avatar", True)),
+            int(self._cfg("jade_max", 30000) or 30000),
+        )
+        reply = event.make_result()
+        if card:
+            reply.file_image(card)
+        else:
+            reply.message("博士的档案生成失败啦，请稍后再试。")
+        event.stop_event()
+        yield reply
 
     # ------------------------------------------------------------------
     # 抽卡
@@ -573,11 +625,21 @@ class ArknightsFunPlugin(star.Star):
                         results, times, pool, self._check_break_even(user), colored=False
                     )
         else:
-            # Amiya continuous_mode（>10 抽）：统计文本（无图）
-            text = self._format_continuous(results, times, pool) + "\n" + self._check_break_even(user)
+            # Amiya continuous_mode（>10 抽）：统计文本转图（text_image）
+            if bool(self._cfg("gacha_render_image", True)):
+                img = await asyncio.to_thread(
+                    render_mod.render_text_image,
+                    self._format_continuous(results, times, pool, colored=True)
+                    + "\n"
+                    + self._check_break_even(user),
+                    AVATAR_CACHE,
+                    str(self._cfg("gacha_image_font", "") or ""),
+                )
+            if not img:
+                text = self._format_continuous(results, times, pool) + "\n" + self._check_break_even(user)
         result = event.make_result()
-        if img and times < 10:
-            # 与原版一致：1~9 抽只发文字图，列表与保底信息已在图内
+        if img and times != 10:
+            # 与原版一致：1~9 抽 / >10 抽只发文字图，内容与保底信息已在图内
             result.file_image(img)
         else:
             if img:
@@ -598,7 +660,7 @@ class ArknightsFunPlugin(star.Star):
             f"剩余寻访凭证 {user.get('coupon', 0)}"
         )
 
-    def _format_continuous(self, results: list[dict], times: int, pool: str) -> str:
+    def _format_continuous(self, results: list[dict], times: int, pool: str, colored: bool = False) -> str:
         """复刻 Amiya GachaBuilder.continuous_mode（>10 抽的统计文本）。"""
         rarity_sum = [0, 0, 0, 0]
         high_star: dict[int, dict[str, int]] = {5: {}, 6: {}}
@@ -624,7 +686,10 @@ class ArknightsFunPlugin(star.Star):
         for r in high_star:  # Amiya 顺序：5★ 组在前
             sd = high_star[r]
             if sd:
-                result += f"\n{self._star(r)}\n"
+                star_line = self._star(r)
+                if colored:
+                    star_line = f"[cl {star_line}@#{render_mod.RARITY_COLOR.get(r, '7F7F7F')} cle]"
+                result += f"\n{star_line}\n"
                 operator_num: dict[int, list[str]] = {}
                 for i in sorted(sd, key=sd.get, reverse=True):
                     num = sd[i]

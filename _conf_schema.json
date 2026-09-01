@@ -17,6 +17,18 @@
     "type": "int",
     "default": 50
   },
+  "sign_feeling": {
+    "description": "每次签到增加信赖值",
+    "hint": "复刻阿米娅：签到 +50 信赖，信赖值显示为 feeling/10%（无上限）",
+    "type": "int",
+    "default": 50
+  },
+  "sign_card_enabled": {
+    "description": "签到/我的信息发送用户信息卡片图",
+    "hint": "复刻阿米娅 userInfo 卡片：头像/签到/信赖/心情/合成玉进度/抽卡统计/星级分布",
+    "type": "bool",
+    "default": true
+  },
   "sign_jade": {
     "description": "每日签到发放合成玉",
     "hint": "默认 0（合成玉主要靠猜干员获得）",

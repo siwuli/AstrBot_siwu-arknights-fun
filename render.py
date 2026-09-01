@@ -404,3 +404,223 @@ def render_detailed(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[arknights_fun] 抽卡文字图渲染失败: {e}")
         return None
+
+RARITY_COLOR = _RARITY_COLOR
+
+
+def render_text_image(text: str, cache_dir: str, custom_font: str = "") -> str | None:
+    """复刻 Chain.text_image：纯文字转图（用于 >10 抽的 continuous_mode 统计图）。
+
+    浅灰底 F5F5F5、HarmonyOS 15px、宽度自适应、行高 16、彩色 [cl] 星级标记。
+    """
+    try:
+        from PIL import Image, ImageDraw  # noqa: F401
+    except ImportError:
+        return None
+    try:
+        image = _create_text_image(text, [], custom_font)
+        os.makedirs(cache_dir, exist_ok=True)
+        out = os.path.join(cache_dir, f"pulls_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
+        image.save(out, "PNG")
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[arknights_fun] 统计文字图渲染失败: {e}")
+        return None
+
+
+_USER_CARD_ASSETS = os.path.join(ASSETS_DIR, "user_card")
+_USER_AVATAR_URL = "https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640"
+
+
+def _user_card_asset(name: str) -> str:
+    return os.path.join(_USER_CARD_ASSETS, name)
+
+
+def _load_user_avatar(uid: str, cache_dir: str, fetch: bool = True) -> str | None:
+    """QQ 头像：本地缓存优先，其次按需下载 qlogo；失败回退默认 avatar.webp。"""
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        target = os.path.join(cache_dir, f"user_{uid}.png")
+        if os.path.exists(target):
+            return target
+        if fetch:
+            try:
+                req = urllib.request.Request(
+                    _USER_AVATAR_URL.format(qq=uid),
+                    headers={"User-Agent": "Mozilla/5.0 (AstrBot arknights_fun)"},
+                )
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    raw = resp.read()
+                if raw:
+                    with open(target, "wb") as f:
+                        f.write(raw)
+                    return target
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[arknights_fun] QQ 头像下载失败 {uid}: {e}")
+    fallback = _user_card_asset("avatar.webp")
+    return fallback if os.path.exists(fallback) else None
+
+
+def _card_text(draw, pos, text, font, fill="#000000", shadow=True):
+    """带 1px 浅灰阴影的卡片文字（复刻 CSS text-shadow: 1px 1px 2px #dcdcdc）。"""
+    x, y = pos
+    if shadow:
+        draw.text((x + 1, y + 1), text, font=font, fill="#dcdcdc")
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _circle_avatar(size: int) -> object:
+    """返回 size×size 圆形蒙版。"""
+    from PIL import Image, ImageDraw
+
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+    return mask
+
+
+def _barcode_stripes(seed_text: str, count: int = 34, bar: int = 2) -> list[bool]:
+    rnd = random.Random(seed_text)
+    return [rnd.random() < 0.55 for _ in range(count)]
+
+
+def _rounded_progress(draw, box, ratio: float, color: str = "#e91e63"):
+    """粉色圆角进度条（复刻 .jade-point/.block）。"""
+    x0, y0, x1, y1 = box
+    radius = (y1 - y0) // 2
+    draw.rounded_rectangle(box, radius=radius, outline=color, width=1)
+    fill_w = max(0, int((x1 - x0 - 2) * min(1.0, max(0.0, ratio))))
+    if fill_w > 0:
+        draw.rounded_rectangle((x0 + 1, y0 + 1, x0 + 1 + fill_w, y1 - 1), radius=radius, fill=color)
+
+
+def render_user_card(
+    uid: str,
+    nickname: str,
+    user: dict,
+    avatar_cache: str,
+    custom_font: str = "",
+    fetch_avatar: bool = True,
+    jade_cap: int = 30000,
+) -> str | None:
+    """复刻 Amiya userInfo 卡片：700×300 模糊背景 + 头像 + 签到/信赖/心情 + 合成玉进度 + 抽卡统计柱状图 + 条码。
+
+    字段映射：信赖值 = user.feeling（签到 +50，显示 feeling/10%）；心情值 = user.mood/15*100%。
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+    except ImportError:
+        return None
+    card_w, card_h = 700, 300
+    try:
+        bg_path = _user_card_asset("user_info.jpeg")
+        if not os.path.exists(bg_path):
+            return None
+        bg = Image.open(bg_path).convert("RGB")
+        bg = bg.resize((card_w + 20, card_h + 20))
+        bg = bg.filter(ImageFilter.GaussianBlur(radius=14))
+        bg = bg.crop((10, 10, 10 + card_w, 10 + card_h))
+        img = bg
+        draw = ImageDraw.Draw(img)
+
+        f18 = _font(18, custom_font)
+        f14 = _font(14, custom_font)
+        f22 = _font(22, custom_font)
+        f16 = _font(16, custom_font)
+
+        padding = 20
+        # ---- 左侧：头像 + 昵称 ----
+        avatar_frame = 90
+        avatar_path = _load_user_avatar(uid, avatar_cache, fetch_avatar)
+        avatar_size = avatar_frame - 20
+        if avatar_path and os.path.exists(avatar_path):
+            av = Image.open(avatar_path).convert("RGBA")
+            side = min(av.size)
+            av = av.crop(((av.width - side) // 2, (av.height - side) // 2, (av.width + side) // 2, (av.height + side) // 2))
+            av = av.resize((avatar_size, avatar_size), Image.Resampling.LANCZOS)
+            mask = _circle_avatar(avatar_size)
+            img.paste(av, (padding + 10, padding + 10), mask)
+        draw.rounded_rectangle(
+            (padding, padding, padding + avatar_frame, padding + avatar_frame),
+            radius=16,
+            outline="#c9a86a",
+            width=3,
+        )
+        name = (str(nickname) or "博士").split("#")[0]
+        _card_text(draw, (padding + avatar_frame + 14, padding + 8), name, f22, "#000000")
+        _card_text(draw, (padding + avatar_frame + 14, padding + 40), f"#{uid}", f14, "#9E9E9E", shadow=False)
+
+        # ---- 中列：签到信息 ----
+        col_x = 210
+        sign_date = str(user.get("sign_date") or "尚未签到")
+        sign_days = int(user.get("sign_days", 0) or 0)
+        feeling = int(user.get("feeling", 0) or 0)
+        mood = int(user.get("mood", 15) or 15)
+        lines_c = [
+            f"最后签到日期：{sign_date}",
+            f"累计签到次数：{sign_days}",
+            f"阿米娅的信赖值：{feeling // 10}%",
+            f"阿米娅的心情值：{max(0, min(100, int(mood / 15 * 100)))}%",
+        ]
+        y = 40
+        for ln in lines_c:
+            _card_text(draw, (col_x, y), ln, f18, "#000000")
+            y += 26
+        jade = int(user.get("jade", 0) or 0)
+        jade_today = int(user.get("jade_today", 0) or 0)
+        _card_text(draw, (col_x, y + 10), f"剩余合成玉：{jade}", f18, "#000000")
+        _card_text(draw, (col_x, y + 36), f"今日已获取合成玉：{jade_today}/{jade_cap}", f18, "#000000")
+        bar_w = 230
+        _rounded_progress(draw, (col_x, y + 62, col_x + bar_w, y + 82), jade_today / jade_cap if jade_cap else 0)
+
+        # ---- 右侧：抽卡统计 ----
+        rx = 480
+        box_n = len(user.get("box") or {})
+        coupon = int(user.get("coupon", 0) or 0)
+        break_even = int(user.get("break_even", 0) or 0)
+        total = int(user.get("total", 0) or 0)
+        _card_text(draw, (rx, 40), f"干员拥有数：{box_n}", f18, "#000000")
+        _card_text(draw, (rx, 66), f"剩余寻访凭证：{coupon}", f18, "#000000")
+        prefix_w = draw.textlength("已经抽取了 ", font=f18)
+        _card_text(draw, (rx, 92), "已经抽取了 ", f18, "#000000")
+        _card_text(draw, (rx + prefix_w, 92), f"{break_even}", f18, "#e91e63")
+        _card_text(draw, (rx, 118), "次而未获得六星干员", f18, "#000000")
+        _card_text(draw, (rx, 144), f"抽卡总次数：{total}", f18, "#000000")
+
+        # ---- 星级分布柱状图 ----
+        stats = user.get("stats") or {}
+        colors = {3: "#67c23a", 4: "#5470c6", 5: "#fac858", 6: "#ee6665"}
+        y = 176
+        if total > 0:
+            for rarity in (6, 5, 4, 3):
+                cnt = int(stats.get(str(rarity), 0) or 0)
+                pct = cnt / total * 100
+                _card_text(draw, (rx, y), "★" * rarity, f16, colors[rarity], shadow=False)
+                bar_x = rx + 70
+                bar_max = 120
+                draw.rounded_rectangle((bar_x, y + 1, bar_x + bar_max, y + 15), radius=7, fill="#ffffff", outline=None)
+                draw.rounded_rectangle(
+                    (bar_x, y + 1, bar_x + max(2, int(bar_max * pct / 100)), y + 15),
+                    radius=7,
+                    fill=colors[rarity],
+                )
+                _card_text(draw, (bar_x + bar_max + 8, y - 1), f"{pct:.2f}%", f14, "#000000", shadow=False)
+                y += 23
+        else:
+            _card_text(draw, (rx, y + 60), "无抽卡数据", f18, "#000000")
+
+        # ---- 右侧竖条码 ----
+        stripes = _barcode_stripes(uid)
+        bx = card_w - 22
+        sy = 40
+        for i, on in enumerate(stripes):
+            if on:
+                draw.rectangle((bx, sy + i * 4, bx + 3, sy + i * 4 + 4), fill="#000000")
+        draw.rectangle((bx - 1, sy - 4, bx + 4, sy + len(stripes) * 4 + 4), outline="#000000")
+
+        out = os.path.join(avatar_cache, f"user_card_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
+        os.makedirs(avatar_cache, exist_ok=True)
+        img.save(out, "PNG")
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[arknights_fun] 用户信息卡片渲染失败: {e}")
+        return None
