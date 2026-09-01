@@ -4,7 +4,7 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 玩法对齐 Amiya-Bot 生态（amiyabot-user 签到、arknights-gacha 抽卡、game-guess 猜干员），
 但收敛进**同一个插件**，数据自包含、零跨插件耦合、开箱即用。
 
-> 插件 id：`arknights_fun`　当前版本：`1.3.3`　适用 AstrBot `>=4.0.0`
+> 插件 id：`arknights_fun`　当前版本：`1.3.4`　适用 AstrBot `>=4.0.0`
 
 ## 经济闭环
 
