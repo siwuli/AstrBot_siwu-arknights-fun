@@ -61,6 +61,11 @@ _RESOURCE_RE = (
 _user_lock = threading.Lock()
 
 
+def _insert_empty(text, max_num: int, half: bool = False) -> str:
+    """复刻 Amiya core.util.insert_empty：文本/数字右补空格到指定宽度。"""
+    return f"{text}{('　' if half else ' ') * (max_num - len(str(text)))}"
+
+
 def _default_user(config: AstrBotConfig) -> dict:
     """新玩家初始数据（凭证/合成玉初始值可配置）。"""
     return {
@@ -342,11 +347,12 @@ class ArknightsFunPlugin(star.Star):
     @filter.command("保底")
     async def cmd_pity(self, event: AstrMessageEvent):
         user = self._user(event)
-        rates = GachaEngine(self.data, user)
+        break_even_rate = 98
+        if int(user.get("break_even", 0)) > 50:
+            break_even_rate -= (int(user.get("break_even", 0)) - 50) * 2
         text = (
-            f"当前已连续 {user.get('break_even', 0)} 抽未出 6★\n"
-            f"下次抽出六星概率：{rates.six_rate_next()}%\n"
-            f"剩余寻访凭证：{user.get('coupon', 0)} 张，合成玉：{user.get('jade', 0)}"
+            f"当前已经抽取了 {user.get('break_even', 0)} 次而未获得六星干员\n"
+            f"下次抽出六星干员的概率为 {100 - break_even_rate}%"
         )
         yield self._send(event, text)
 
@@ -391,16 +397,8 @@ class ArknightsFunPlugin(star.Star):
         user = self._user(event)
         box = user.get("box") or {}
         if not box:
-            yield self._send(event, "博士还没有抽到任何干员哦，先试试「签到」和「十连」吧~（内容过长时请分批查看）")
+            yield self._send(event, "博士，您尚未获得任何干员")
             return
-        lines = [f"博士的干员箱（共 {sum(box.values())} 位）："]
-        groups = {3: [], 4: [], 5: [], 6: []}
-        for name, cnt in box.items():
-            groups[self._rarity_of(name)].append(f"{name}×{cnt}")
-        for r in (6, 5, 4, 3):
-            if groups[r]:
-                lines.extend([f"{self._star(r)}：" + "、".join(groups[r])])
-        text = "\n".join(lines)
         img = None
         if bool(self._cfg("gacha_render_image", True)):
             img = await asyncio.to_thread(
@@ -410,11 +408,21 @@ class ArknightsFunPlugin(star.Star):
                 AVATAR_CACHE,
                 str(self._cfg("gacha_image_font", "") or ""),
             )
-        result = event.make_result().message(text)
+        result = event.make_result()
         if img:
             result.file_image(img)
-        event.stop_event()
-        yield result
+            event.stop_event()
+            yield result
+            return
+        # 图片渲染不可用时降级为文本列表
+        lines = [f"博士的干员箱（共 {sum(box.values())} 位）："]
+        groups = {3: [], 4: [], 5: [], 6: []}
+        for name, cnt in box.items():
+            groups[self._rarity_of(name)].append(f"{name}×{cnt}")
+        for r in (6, 5, 4, 3):
+            if groups[r]:
+                lines.extend([f"{self._star(r)}：" + "、".join(groups[r])])
+        yield self._send(event, "\n".join(lines))
 
     def _rarity_of(self, name: str) -> int:
         o = self.data.operators.get(name)
@@ -447,19 +455,18 @@ class ArknightsFunPlugin(star.Star):
             spent_coupon = 0
             spent_jade = 0
             if not free:
-                if coupon >= times:
-                    spent_coupon = times
-                else:
-                    spent_coupon = coupon
-                    need_jade = (times - coupon) * per
-                    if jade < need_jade:
+                if times > coupon:
+                    point_need = (times - coupon) * per
+                    if jade < point_need:
                         outcome["error"] = (
-                            f"博士的资源不够哦~\n寻访凭证：{coupon} 张\n合成玉：{jade}"
-                            f"\n本次需要 {times} 抽（还差 {need_jade - jade} 合成玉，"
-                            f"或 {times - coupon} 张凭证）\n试试「签到」领凭证，或「猜干员」赚合成玉吧~"
+                            f"博士，您的寻访资源不够哦~\n寻访凭证剩余{coupon}张\n合成玉剩余{jade}"
                         )
                         return
-                    spent_jade = need_jade
+                    outcome["notify_jade"] = point_need
+                    spent_coupon = coupon
+                    spent_jade = point_need
+                else:
+                    spent_coupon = times
                 user["coupon"] = coupon - spent_coupon
                 user["jade"] = jade - spent_jade
             engine = GachaEngine(
@@ -475,61 +482,134 @@ class ArknightsFunPlugin(star.Star):
                 stats[str(r["rarity"])] = stats.get(str(r["rarity"]), 0) + 1
                 box[r["name"]] = box.get(r["name"], 0) + 1
             user["total"] = int(user.get("total", 0)) + times
-            outcome.update(engine=engine, results=results, spent_coupon=spent_coupon, spent_jade=spent_jade)
+            outcome.update(
+                engine=engine,
+                results=results,
+                user=dict(user),
+                spent_coupon=spent_coupon,
+                spent_jade=spent_jade,
+            )
 
         self._with_user(uid, fn)
         if "error" in outcome:
             yield self._send(event, outcome["error"])
             return
+        if outcome.get("notify_jade"):
+            await event.send(f"寻访凭证剩余{outcome['spent_coupon']}张，将消耗{outcome['notify_jade']}合成玉")
         engine: GachaEngine = outcome["engine"]
         results: list[dict] = outcome["results"]
-        text = self._format_results(engine, results, times)
-        costs = [f"消耗 {outcome['spent_coupon']} 张凭证"]
-        if outcome["spent_jade"]:
-            costs.append(f"{outcome['spent_jade']} 合成玉")
-        text += "\n本次" + ("、".join(costs) if outcome["spent_coupon"] or outcome["spent_jade"] else "未消耗资源（免费模式）")
+        user = outcome["user"]
+        pool = self._pool_name(engine.pool)
+        show_names = bool(self._cfg("gacha_show_pull_names", False))
+        text = ""
         img = None
-        if times <= 10 and bool(self._cfg("gacha_render_image", True)):
-            img = await asyncio.to_thread(
-                render_mod.render_pulls,
-                self.data,
-                results,
-                self._pool_name(engine.pool),
-                AVATAR_CACHE,
-                bool(self._cfg("gacha_fetch_avatar", True)),
-                str(self._cfg("gacha_image_font", "") or ""),
-            )
-        result = event.make_result().message(text)
+        if times <= 10:
+            if times == 10:
+                # Amiya 十连：图 + 【池名】(+名字列表) + 保底信息
+                text = f"【{pool}】\n"
+                if show_names:
+                    text += "".join(f"【{r['name']}】" for r in results) + "\n"
+                text += self._check_break_even(user)
+                if bool(self._cfg("gacha_render_image", True)):
+                    img = await asyncio.to_thread(
+                        render_mod.render_pulls,
+                        self.data,
+                        results,
+                        pool,
+                        AVATAR_CACHE,
+                        bool(self._cfg("gacha_fetch_avatar", True)),
+                        str(self._cfg("gacha_image_font", "") or ""),
+                    )
+            else:
+                # Amiya detailed_mode（≤9 抽）：简历文本 + 保底信息（AstrBot 以拼图替代阿米娅的头像图标）
+                result_text = f"阿米娅给博士扔来了{times}张简历，博士细细地检阅着...\n\n【{pool}】\n\n"
+                for r in results:
+                    result_text += (
+                        f"{' ' * 15}{_insert_empty(r['name'], 6, True)}{self._star(r['rarity'])}\n\n"
+                    )
+                text = result_text + "\n" + self._check_break_even(user)
+                if bool(self._cfg("gacha_render_image", True)):
+                    img = await asyncio.to_thread(
+                        render_mod.render_pulls,
+                        self.data,
+                        results,
+                        pool,
+                        AVATAR_CACHE,
+                        bool(self._cfg("gacha_fetch_avatar", True)),
+                        str(self._cfg("gacha_image_font", "") or ""),
+                    )
+        else:
+            # Amiya continuous_mode（>10 抽）：统计文本（无图）
+            text = self._format_continuous(results, times, pool) + "\n" + self._check_break_even(user)
+        result = event.make_result()
         if img:
             result.file_image(img)
+        result.message(text)
         event.stop_event()
         yield result
 
-    def _format_results(self, engine: GachaEngine, results: list[dict], times: int) -> str:
-        lines = [
-            f"阿米娅给博士扔来了{times}张简历，博士细细地检阅着...\n【{self._pool_name(engine.pool)}】",
-        ]
-        if times <= 10:
-            lines.extend([f"{' ' * 6}{r['name']}  {self._star(r['rarity'])}" for r in results])
-        else:
-            stats = {3: 0, 4: 0, 5: 0, 6: 0}
-            high: dict[int, dict[str, int]] = {5: {}, 6: {}}
-            for r in results:
-                stats[r["rarity"]] += 1
-                if r["rarity"] >= 5:
-                    high[r["rarity"]][r["name"]] = high[r["rarity"]].get(r["name"], 0) + 1
-            for star in (6, 5):
-                if high[star]:
-                    lines.append(f"\n{self._star(star)}：")
-                    for name, cnt in sorted(high[star].items(), key=lambda kv: -kv[1]):
-                        lines.append(f"  {name} × {cnt}")
-            if stats[6] == 0 and stats[5] == 0:
-                lines.append("\n然而并没有高星干员...")
-            lines.append(f"\n三星：{stats[3]}　四星：{stats[4]}　五星：{stats[5]}　六星：{stats[6]}")
-        lines.append(
-            f"\n当前已连续 {engine.break_even} 抽未出 6★，下次六星概率 {engine.six_rate_next()}%",
+    def _check_break_even(self, user: dict) -> str:
+        """复刻 Amiya GachaBuilder.check_break_even。"""
+        break_even = int(user.get("break_even", 0))
+        break_even_rate = 98
+        if break_even > 50:
+            break_even_rate -= (break_even - 50) * 2
+        return (
+            f"当前已经抽取了 {break_even} 次而未获得六星干员\n"
+            f"下次抽出六星干员的概率为 {100 - break_even_rate}%\n"
+            f"剩余寻访凭证 {user.get('coupon', 0)}"
         )
-        return "\n".join(lines)
+
+    def _format_continuous(self, results: list[dict], times: int, pool: str) -> str:
+        """复刻 Amiya GachaBuilder.continuous_mode（>10 抽的统计文本）。"""
+        rarity_sum = [0, 0, 0, 0]
+        high_star: dict[int, dict[str, int]] = {5: {}, 6: {}}
+        ten_gacha: list[int] = []
+        purple_pack = 0
+        multiple_rainbow: dict[int, int] = {}
+        result = f"阿米娅给博士扔来了{times}张简历，博士细细地检阅着...\n\n【{pool}】\n"
+        for item in results:
+            rarity = item["rarity"]
+            name = item["name"]
+            rarity_sum[rarity - 3] += 1
+            if rarity >= 5:
+                high_star[rarity][name] = high_star[rarity].get(name, 0) + 1
+            ten_gacha.append(rarity)
+            if len(ten_gacha) >= 10:
+                five = ten_gacha.count(5)
+                six = ten_gacha.count(6)
+                if five == 0 and six == 0:
+                    purple_pack += 1
+                if six > 1:
+                    multiple_rainbow[six] = multiple_rainbow.get(six, 0) + 1
+                ten_gacha = []
+        for r in high_star:  # Amiya 顺序：5★ 组在前
+            sd = high_star[r]
+            if sd:
+                result += f"\n{self._star(r)}\n"
+                operator_num: dict[int, list[str]] = {}
+                for i in sorted(sd, key=sd.get, reverse=True):
+                    num = sd[i]
+                    operator_num.setdefault(num, []).append(i)
+                for num in operator_num:
+                    result += "、".join(operator_num[num]) + f" X {num}\n"
+        if rarity_sum[2] == 0 and rarity_sum[3] == 0:
+            result += "\n然而并没有高星干员..."
+        result += (
+            f"\n三星：{_insert_empty(rarity_sum[0], 4)}四星：{rarity_sum[1]}\n"
+            f"五星：{_insert_empty(rarity_sum[2], 4)}六星：{rarity_sum[3]}\n"
+        )
+        enter = True
+        if purple_pack > 0:
+            result += "\n"
+            enter = False
+            result += f"出现了 {purple_pack} 次十连紫气东来\n"
+        for num in multiple_rainbow:
+            if enter:
+                result += "\n"
+                enter = False
+            result += f"出现了 {multiple_rainbow[num]} 次十连内 {num} 个六星\n"
+        return result
 
     # ------------------------------------------------------------------
     # 猜干员

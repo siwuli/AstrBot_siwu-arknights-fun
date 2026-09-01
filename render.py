@@ -1,4 +1,10 @@
-"""抽卡结果 / 干员箱图片渲染（PIL 可选依赖，缺失或失败时调用方回退纯文本）。"""
+"""抽卡/干员箱图片渲染（复刻 Amiya-Bot amiyabot-arknights-gacha 的素材与绘制逻辑）。
+
+- 抽卡拼图（1~10 抽）：官方组图背景 bg.png + 稀有度边框 + 立绘中央裁剪 + 职业图标，
+  最后整体 0.8 倍缩放 —— 与 Amiya create_gacha_image 一致；
+- 干员箱：浅灰底 + 头像 + 数量角标（rank/1-6.png），按稀有度分组 —— 与 Amiya box.py 一致；
+- PIL 或素材缺失时返回 None，调用方回退纯文本。
+"""
 
 import logging
 import os
@@ -10,18 +16,10 @@ from .gamedata import AVATAR_DIR, PORTRAIT_DIR, GameData
 
 logger = logging.getLogger("astrbot")
 
-RARITY_RGB = {6: (255, 67, 67), 5: (254, 166, 58), 4: (162, 136, 181), 3: (136, 136, 136)}
-PROF_CN = {
-    "PIONEER": "先锋",
-    "WARRIOR": "近卫",
-    "TANK": "重装",
-    "SNIPER": "狙击",
-    "CASTER": "术师",
-    "MEDIC": "医疗",
-    "SUPPORT": "辅助",
-    "SPECIAL": "特种",
-    "TOKEN": "召唤物",
-}
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+GACHA_ASSETS = os.path.join(ASSETS_DIR, "gacha")
+CLASSIFY_ASSETS = os.path.join(ASSETS_DIR, "classify")
+RANK_ASSETS = os.path.join(ASSETS_DIR, "rank")
 
 _AVATAR_URL = (
     "https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/master/zh_CN/gamedata/"
@@ -59,12 +57,8 @@ def _font(size: int, custom: str = ""):
             return ImageFont.load_default()
 
 
-def _rgb(rarity: int) -> tuple[int, int, int]:
-    return RARITY_RGB.get(rarity, (136, 136, 136))
-
-
 def _op_art(data: GameData, name: str, cache_dir: str, fetch: bool) -> str | None:
-    """返回干员立绘/头像路径：共享 portrait 或 avatar 目录，缺失时按需下载到插件缓存。"""
+    """返回干员立绘/头像路径：优先共享 portrait，其次 avatar；缺失时按需下载到插件缓存。"""
     op = data.operators.get(name)
     oid = str((op or {}).get("id") or "")
     if not oid:
@@ -94,58 +88,6 @@ def _op_art(data: GameData, name: str, cache_dir: str, fetch: bool) -> str | Non
     return None
 
 
-def _draw_card(img, draw, name: str, rarity: int, prof: str, art: str | None, x: int, y: int, w: int, h: int, font_path: str) -> None:
-    """绘制单张干员卡片（稀有度描边 + 立绘/头像 + 名字 + 星级 + 职业）。"""
-    rgb = _rgb(rarity)
-    draw.rounded_rectangle([x, y, x + w - 1, y + h - 1], radius=12, outline=rgb, width=4)
-    art_top = y + 6
-    art_bottom = y + int(h * 0.62)
-    inner_w = w - 12
-    inner_h = art_bottom - art_top
-    if art and inner_w > 0 and inner_h > 0:
-        try:
-            from PIL import Image
-
-            src = Image.open(art).convert("RGBA")
-            scale = inner_h / src.height
-            nw = max(1, int(src.width * scale))
-            src = src.resize((nw, inner_h), Image.Resampling.LANCZOS)
-            if nw > inner_w:
-                left = (nw - inner_w) // 2
-                src = src.crop((left, 0, left + inner_w, inner_h))
-            img.paste(src, (x + 6, art_top), src)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[arknights_fun] 立绘处理失败 {name}: {e}")
-
-    f_name = _font(20, font_path)
-    f_star = _font(18, font_path)
-    f_cls = _font(14, font_path)
-    text_y = art_bottom + 6
-    draw.text(
-        (x + (w - draw.textlength(name, font=f_name)) / 2, text_y),
-        name,
-        fill=(40, 40, 40),
-        font=f_name,
-    )
-    stars = "★" * rarity
-    text_y += 26
-    draw.text(
-        (x + (w - draw.textlength(stars, font=f_star)) / 2, text_y),
-        stars,
-        fill=rgb,
-        font=f_star,
-    )
-    prof_cn = PROF_CN.get(prof, prof or "")
-    if prof_cn:
-        text_y += 24
-        draw.text(
-            (x + (w - draw.textlength(prof_cn, font=f_cls)) / 2, text_y),
-            prof_cn,
-            fill=(120, 120, 120),
-            font=f_cls,
-        )
-
-
 def render_pulls(
     data: GameData,
     results: list[dict],
@@ -154,105 +96,125 @@ def render_pulls(
     fetch: bool = True,
     custom_font: str = "",
 ) -> str | None:
-    """渲染抽卡结果拼图（≤10 抽时调用）。返回图片路径；失败返回 None。"""
+    """复刻 Amiya create_gacha_image：背景 + 边框 + 立绘 + 职业图标，0.8 倍缩放。
+
+    不足 10 抽时裁掉背景右侧未使用区域，保留 Amiya 左侧版式。
+    """
     try:
         from PIL import Image, ImageDraw
     except ImportError:
+        return None
+    bg_path = os.path.join(GACHA_ASSETS, "bg.png")
+    if not os.path.exists(bg_path):
         return None
     n = len(results)
     if n <= 0:
         return None
-    per_row = 5
-    rows = (n + per_row - 1) // per_row
-    card_w, card_h = 172, 236
-    pad = 10
-    header_h = 44
-    cols = min(n, per_row)
-    img_w = cols * card_w + (cols + 1) * pad
-    img_h = header_h + rows * card_h + (rows + 1) * pad
-    img = Image.new("RGB", (img_w, img_h), (248, 249, 252))
-    draw = ImageDraw.Draw(img)
-    draw.text((pad, 12), f"【{pool_name}】", fill=(60, 60, 60), font=_font(22, custom_font))
-    for i, r in enumerate(results):
-        row, col = divmod(i, per_row)
-        x = pad + col * (card_w + pad)
-        y = header_h + pad + row * (card_h + pad)
-        art = _op_art(data, r["name"], cache_dir, fetch)
-        prof = (data.operators.get(r["name"]) or {}).get("prof", "")
-        _draw_card(img, draw, r["name"], r["rarity"], prof, art, x, y, card_w, card_h, custom_font)
-    os.makedirs(cache_dir, exist_ok=True)
-    out = os.path.join(cache_dir, f"pulls_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
-    img.save(out, "PNG")
-    return out
+    try:
+        image = Image.open(bg_path)
+        draw = ImageDraw.ImageDraw(image)
+        x = 78
+        used = 0
+        for r in results[:10]:
+            rarity = int(r["rarity"])
+            frame = os.path.join(GACHA_ASSETS, f"{rarity}.png")
+            if os.path.exists(frame):
+                img = Image.open(frame).convert("RGBA")
+                image.paste(img, box=(x, 0), mask=img)
+            portrait = _op_art(data, r["name"], cache_dir, fetch)
+            if portrait and os.path.exists(portrait):
+                img = Image.open(portrait).convert("RGBA")
+                radio = 252 / img.size[1]
+                width = int(img.size[0] * radio)
+                height = int(img.size[1] * radio)
+                step = int((width - 82) / 2)
+                crop = (step, 0, width - step, height)
+                img = img.resize(size=(width, height))
+                img = img.crop(crop)
+                image.paste(img, box=(x, 112), mask=img)
+            draw.rectangle((x + 10, 321, x + 70, 381), fill="white")
+            op = data.operators.get(r["name"]) or {}
+            prof = str(op.get("prof") or "").lower()
+            class_img = os.path.join(CLASSIFY_ASSETS, f"{prof}.png")
+            if os.path.exists(class_img):
+                img = Image.open(class_img).convert("RGBA").resize((59, 59))
+                image.paste(img, box=(x + 11, 322), mask=img)
+            x += 82
+            used += 1
+        if used < 10:
+            width = 78 + 82 * used
+            image = image.crop((0, 0, width, image.size[1]))
+        w, h = image.size
+        image = image.resize((int(w * 0.8), int(h * 0.8)), Image.Resampling.LANCZOS)
+        os.makedirs(cache_dir, exist_ok=True)
+        out = os.path.join(cache_dir, f"pulls_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
+        image.save(out, "PNG")
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[arknights_fun] 抽卡拼图渲染失败: {e}")
+        return None
 
 
 def render_box(data: GameData, box: dict[str, int], cache_dir: str, custom_font: str = "") -> str | None:
-    """渲染干员箱拼图（最多展示 30 位；其余见文本列表）。返回图片路径；失败返回 None。"""
+    """复刻 Amiya box.py：浅灰底 + 60px 头像 + rank 角标，按稀有度 6→5→4→3 分组排列。"""
     try:
         from PIL import Image, ImageDraw
     except ImportError:
         return None
-    items: list[tuple[dict | None, str, int, str | None]] = []
-    for name, cnt in box.items():
-        op = data.operators.get(name)
-        oid = str((op or {}).get("id") or "")
-        art = None
-        if oid:
-            for p in (
-                os.path.join(PORTRAIT_DIR, f"{oid}#1.png"),
-                os.path.join(AVATAR_DIR, f"{oid}#1.png"),
-            ):
-                if os.path.exists(p):
-                    art = p
-                    break
-        items.append((op, name, int(cnt), art))
-    items.sort(key=lambda it: (-(it[0] or {}).get("rarity", 3), it[1]))
-    items = items[:30]
-    if not items:
+    if not box:
         return None
+    collect: dict[int, list[tuple[str, int, str | None]]] = {6: [], 5: [], 4: [], 3: []}
+    for name, cnt in box.items():
+        op = data.operators.get(name) or {}
+        r = int(op.get("rarity", 3))
+        if r in collect:
+            collect[r].append((name, int(cnt), _op_art(data, name, cache_dir, False)))
 
-    size = 78
-    per_row = 6
-    pad = 12
-    header_h = 44
-    rows = (len(items) + per_row - 1) // per_row
-    img_w = per_row * size + (per_row + 1) * pad
-    img_h = header_h + rows * (size + 12) + pad
-    img = Image.new("RGB", (img_w, img_h), (248, 249, 252))
+    size = 60
+    rank_size = 20
+    padding = 10
+    y_pos = 52 - size
+    max_length = 10
+    placed: list[tuple[str, tuple[int, int], int]] = []
+    for rarity in (6, 5, 4, 3):
+        x_pos = padding
+        y_pos += size + 10
+        for index, (_name, cnt, art) in enumerate(collect[rarity]):
+            if art and os.path.exists(art):
+                placed.append((art, (x_pos, y_pos), size))
+                rank_file = os.path.join(RANK_ASSETS, f"{min(cnt, 6)}.png")
+                if os.path.exists(rank_file):
+                    placed.append(
+                        (rank_file, (x_pos + size - rank_size, y_pos + size - rank_size), rank_size),
+                    )
+            if (index + 1) % max_length == 0:
+                x_pos = padding
+                y_pos += size
+            else:
+                x_pos += size
+
+    width = size * max_length + padding * 2
+    height = y_pos + padding + size
+    img = Image.new("RGB", (width, height), (245, 245, 245))  # '#F5F5F5'
     draw = ImageDraw.Draw(img)
+    f_head = _font(16, custom_font)
+    draw.text((padding, padding), "博士，这是您的干员列表（按获取顺序）", fill=(0, 0, 0), font=f_head)
     draw.text(
-        (pad, 10),
-        f"博士的干员箱（{sum(box.values())} 位，图片展示前 {len(items)}）",
-        fill=(60, 60, 60),
-        font=_font(20, custom_font),
+        (padding, padding + 22),
+        '请注意，以下为"兔兔抽卡"插件记录的 BOX，并非您的真实 BOX。',
+        fill=(0, 0, 0),
+        font=f_head,
     )
-    for i, (op, name, cnt, art) in enumerate(items):
-        row, col = divmod(i, per_row)
-        x = pad + col * (size + pad)
-        y = header_h + pad + row * (size + 12)
-        rgb = _rgb(int((op or {}).get("rarity", 3)))
-        if art:
-            try:
-                src = Image.open(art).convert("RGBA")
-                w0, h0 = src.size
-                side = min(w0, h0)
-                src = src.crop(((w0 - side) // 2, (h0 - side) // 2, (w0 + side) // 2, (h0 + side) // 2))
-                src = src.resize((size, size), Image.Resampling.LANCZOS)
-                img.paste(src, (x, y), src)
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"[arknights_fun] 干员箱图片处理失败 {name}: {e}")
-                draw.rounded_rectangle([x, y, x + size - 1, y + size - 1], radius=8, outline=rgb, width=3)
-        else:
-            draw.rounded_rectangle([x, y, x + size - 1, y + size - 1], radius=8, outline=rgb, width=3)
-            f_cls = _font(13, custom_font)
-            draw.text(
-                (x + (size - draw.textlength(name, font=f_cls)) / 2, y + size // 2 - 8),
-                name[:4],
-                fill=(100, 100, 100),
-                font=f_cls,
-            )
-        draw.rounded_rectangle([x + 4, y + size - 24, x + 4 + draw.textlength(f"x{cnt}", font=_font(16, custom_font)) + 6, y + size - 4], radius=6, fill=(70, 70, 70))
-        draw.text((x + 7, y + size - 22), f"x{cnt}", fill=(255, 255, 255), font=_font(16, custom_font))
+    for art, pos, sz in placed:
+        try:
+            src = Image.open(art).convert("RGBA")
+            w0, h0 = src.size
+            side = min(w0, h0)
+            src = src.crop(((w0 - side) // 2, (h0 - side) // 2, (w0 + side) // 2, (h0 + side) // 2))
+            src = src.resize((sz, sz), Image.Resampling.LANCZOS)
+            img.paste(src, pos, src)
+        except Exception as e:  # noqa: BLE001, PERF203
+            logger.warning(f"[arknights_fun] 干员箱图片处理失败: {e}")
     os.makedirs(cache_dir, exist_ok=True)
     out = os.path.join(cache_dir, f"box_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
     img.save(out, "PNG")

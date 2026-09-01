@@ -83,6 +83,12 @@
     "type": "string",
     "default": ""
   },
+  "gacha_show_pull_names": {
+    "description": "十连结果显示干员名称",
+    "hint": "对应阿米娅 display_operator_name：默认关闭，十连只发图+保底信息；开启后消息里同时显示抽到的干员名称",
+    "type": "bool",
+    "default": false
+  },
   "gacha_render_image": {
     "description": "抽卡结果输出图片",
     "hint": "十连及单抽渲染干员立绘拼图（PIL 渲染，缺失头像自动下载）",

@@ -4,7 +4,7 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 玩法对齐 Amiya-Bot 生态（amiyabot-user 签到、arknights-gacha 抽卡、game-guess 猜干员），
 但收敛进**同一个插件**，数据自包含、零跨插件耦合、开箱即用。
 
-> 插件 id：`arknights_fun`　当前版本：`1.0.0`　适用 AstrBot `>=4.0.0`
+> 插件 id：`arknights_fun`　当前版本：`1.1.0`　适用 AstrBot `>=4.0.0`
 
 ## 经济闭环
 
@@ -39,8 +39,10 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 
 - 概率：3★40% / 4★50% / 5★8% / 6★2%；连续 50 抽未出 6★ 后每抽 +2%，99 抽必出；
 - 十连保底 5★（可配置）；UP 干员按 50% 权重（可配置覆盖名单）；
-- 1~10 抽渲染**干员拼图**（立绘/头像 + 稀有度描边 + 星级 + 职业），
-  头像缺失自动从 GitHub 按需下载缓存；没有图片环境时自动回退纯文本。
+- 抽卡/干员箱图片**完全复刻 Amiya-Bot 原版**：抽卡拼图使用官方素材组图（背景 bg.png + 稀有度边框 + 立绘中央裁剪 + 职业图标，整体 0.8 倍缩放）；
+  `box` 输出按稀有度分组的头像+数量角标图；头像缺失自动从 GitHub 按需下载缓存；素材缺失时自动回退纯文本。
+- 文字输出同步 Amiya 原样格式：≤10 抽为简历列表、>10 抽为高星统计文本，尾部为「当前已经抽取了 X 次而未获得六星干员…」保底信息；
+  十连默认只发图+保底信息（与 Amiya `display_operator_name=false` 一致），可在配置 `gacha_show_pull_names` 开启显示干员名。
 
 ## 数据方案（可移植、零耦合、不重复下载）
 
@@ -65,6 +67,7 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 | `gacha_guarantee5` | 开 | 十连保底 |
 | `gacha_pickup_6` / `gacha_pickup_5` | 空 | UP 覆盖名单（新版官方数据无 UP 时用） |
 | `gacha_render_image` / `gacha_fetch_avatar` | 开 / 开 | 出图与头像自动下载 |
+| `gacha_show_pull_names` | 关 | 十连消息里同时显示干员名称（对应阿米娅 display_operator_name） |
 | `gacha_image_font` | 空 | 自定义字体路径（留空自动检测） |
 | `gacha_auto_update` / `gacha_update_interval_hours` | 开 / 24 | 抽卡数据自动更新 |
 | `guess_enabled` / `guess_questions` / `guess_timeout_sec` | 开 / 5 / 60 | 猜干员开关、题数、每题超时 |
@@ -76,7 +79,7 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 ## 安装
 
 1. 打包：`python plugins/astrbot/siwu-arknights-fun-1_0/build.py`
-2. 产物：`plugins/astrbot/dist/siwu-arknights-fun-1.0.0.zip`
+2. 产物：`plugins/astrbot/dist/siwu-arknights-fun-1.1.0.zip`
 3. 管理面板上传安装，或解压到 `data/plugins/arknights_fun/` 后重启 AstrBot。
 
 > 升级提示：若之前单独装过 `arknights_gacha` / `guess_operator` 旧插件，
