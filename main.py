@@ -756,19 +756,18 @@ class ArknightsFunPlugin(star.Star):
     # ------------------------------------------------------------------
     @filter.custom_filter(GameActiveFilter, priority=95)
     async def gate_game(self, event: AstrMessageEvent):
-        """游戏进行中：识别作答/提示/跳过/结束；其他消息放行不拦截。"""
+        """游戏进行中（对齐 Amiya game-guess）：作答/提示/跳过/结束无需 @ 直接触发；
+        本群其他消息一律静默——暂停其他功能与 LLM 响应。"""
         gid = str(event.get_group_id() or "")
         sess = _SESSIONS.get(gid)
-        if not sess or sess["phase"] != "playing":
-            return
-        handled = await self.guess.handle_msg(
-            event,
-            sess,
-            int(self._cfg("guess_points_bingo", 100) or 100),
-            int(self._cfg("guess_jade_bingo", 300) or 300),
-        )
-        if handled:
-            event.stop_event()
+        if sess and sess["phase"] == "playing":
+            await self.guess.handle_msg(
+                event,
+                sess,
+                int(self._cfg("guess_points_bingo", 100) or 100),
+                int(self._cfg("guess_jade_bingo", 300) or 300),
+            )
+        event.stop_event()
 
     # ------------------------------------------------------------------
     # 管理后台（AstrBot WebUI 插件页面）

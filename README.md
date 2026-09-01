@@ -4,7 +4,7 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 玩法对齐 Amiya-Bot 生态（amiyabot-user 签到、arknights-gacha 抽卡、game-guess 猜干员），
 但收敛进**同一个插件**，数据自包含、零跨插件耦合、开箱即用。
 
-> 插件 id：`arknights_fun`　当前版本：`1.3.0`　适用 AstrBot `>=4.0.0`
+> 插件 id：`arknights_fun`　当前版本：`1.3.1`　适用 AstrBot `>=4.0.0`
 
 ## 经济闭环
 
@@ -31,7 +31,7 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 | `猜干员排行` | 赛季积分榜 |
 | `猜干员数据` / `数据状态` | 数据就绪/更新状态 |
 
-猜干员进行中：直接发送干员名作答；`提示` 要线索；`跳过` 公布答案；`结束竞猜` 终止。
+猜干员进行中（与阿米娅一致）：**作答无需 @ 或唤醒词**，直接发送干员名即可；`提示` 要线索；`跳过` 公布答案；`结束竞猜` 终止；**游戏期间本群其他功能（抽卡/签到/查询等）与 LLM 回复全部暂停**，游戏结束自动恢复。
 难度：初级（基础线索）/ 中级（技能名）/ 高级（语音台词）/ 资深（档案片段），
 高级/资深数据不足时自动回退中级。
 
@@ -92,7 +92,7 @@ AstrBot 插件：**签到 + 模拟抽卡 + 猜干员** 三合一，统一「寻�
 ## 安装
 
 1. 打包：`python plugins/astrbot/siwu-arknights-fun-1_0/build.py`
-2. 产物：`plugins/astrbot/dist/siwu-arknights-fun-1.3.0.zip`
+2. 产物：`plugins/astrbot/dist/siwu-arknights-fun-1.3.1.zip`
 3. 管理面板上传安装，或解压到 `data/plugins/arknights_fun/` 后重启 AstrBot。
 
 > 升级提示：若之前单独装过 `arknights_gacha` / `guess_operator` 旧插件，
