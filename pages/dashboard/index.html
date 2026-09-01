@@ -68,7 +68,7 @@
         <div class="card">
           <h3>可用卡池</h3>
           <table class="data-table">
-            <thead><tr><th>#</th><th>卡池名</th><th>ID</th><th>6★UP</th><th>5★UP</th></tr></thead>
+            <thead><tr><th>#</th><th>卡池名</th><th>可抽干员</th><th>6★UP</th><th>5★UP</th><th></th></tr></thead>
             <tbody id="poolsBody"></tbody>
           </table>
           <p class="hint">新版官方卡池可能无 UP 数据，可在插件配置 gacha_pickup_6 / gacha_pickup_5 指定。</p>
@@ -95,6 +95,25 @@
       <div class="modal-actions">
         <button class="btn" id="adjustCancel">取消</button>
         <button class="btn primary" id="adjustConfirm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="poolModal" hidden>
+    <div class="modal wide">
+      <div class="modal-title" id="poolModalTitle">卡池管理</div>
+      <div class="form-group">
+        <label>6★ UP 干员（逗号分隔，可空则使用官方/默认）</label>
+        <input id="poolPickup6" type="text" placeholder="如：玛恩纳,缪尔赛思" />
+      </div>
+      <div class="form-group">
+        <label>5★ UP 干员（逗号分隔，可空）</label>
+        <input id="poolPickup5" type="text" placeholder="如：焰尾,琴柳" />
+      </div>
+      <div class="pool-lists" id="poolLists"></div>
+      <div class="modal-actions">
+        <button class="btn" id="poolCancel">取消</button>
+        <button class="btn primary" id="poolSave">保存 UP</button>
       </div>
     </div>
   </div>

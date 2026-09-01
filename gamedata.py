@@ -161,6 +161,16 @@ class GameData:
         self.using_builtin = True
         self.load()
 
+    @staticmethod
+    def is_pullable(op_id: str, name: str, prof: str) -> bool:
+        """是否可进入卡池：排除召唤物（token_/trap_/TOKEN 职业）与预备干员。"""
+        oid = str(op_id or "")
+        if oid and not oid.startswith("char_"):
+            return False
+        if str(prof or "").upper() == "TOKEN":
+            return False
+        return "预备干员" not in str(name or "")
+
     def load(self) -> None:
         """优先读公共 excel；失败回退内置资产。"""
         if excel_ready():
@@ -177,7 +187,11 @@ class GameData:
         with open(BUILTIN_OPERATORS, encoding="utf-8") as f:
             data = json.load(f)
         for o in data.get("operators", []):
-            if o.get("rarity") in (3, 4, 5, 6) and o.get("name"):
+            if (
+                o.get("rarity") in (3, 4, 5, 6)
+                and o.get("name")
+                and self.is_pullable(o.get("id") or "", o.get("name") or "", o.get("prof") or "")
+            ):
                 self.operators[o["name"]] = o
         self._index_rarity()
         try:
@@ -204,6 +218,8 @@ class GameData:
             except ValueError:
                 continue
             if rar not in (3, 4, 5, 6):
+                continue
+            if not self.is_pullable(cid, c.get("name") or "", c.get("profession") or ""):
                 continue
             names = []
             for s in (c.get("skills") or []):

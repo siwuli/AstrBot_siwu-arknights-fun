@@ -131,15 +131,55 @@
   function renderPools(pools) {
     var body = $("#poolsBody");
     if (!pools.length) {
-      body.innerHTML = "<tr><td colspan='5' class='empty'>暂无卡池数据（数据下载中）</td></tr>";
+      body.innerHTML = "<tr><td colspan='7' class='empty'>暂无卡池数据（数据下载中）</td></tr>";
       return;
     }
     body.innerHTML = pools.map(function (p, i) {
-      return "<tr><td>" + (i + 1) + "</td><td>" + escapeHtml(p.name) + "</td>" +
-        "<td class='mono'>" + escapeHtml(p.id) + "</td>" +
-        "<td>" + escapeHtml(p.pickup_6 || "—") + "</td>" +
-        "<td>" + escapeHtml(p.pickup_5 || "—") + "</td></tr>";
+      var c = p.counts || {};
+      var ov = p.override || {};
+      var up6 = ov.pickup_6 || p.pickup_6 || "—";
+      var up5 = ov.pickup_5 || p.pickup_5 || "—";
+      return "<tr><td>" + (i + 1) + "</td>" +
+        "<td>" + escapeHtml(p.name) + "</td>" +
+        "<td>6★" + (c["6"] || 0) + "・5★" + (c["5"] || 0) + "・4★" + (c["4"] || 0) + "・3★" + (c["3"] || 0) + "</td>" +
+        "<td>" + escapeHtml(up6) + "</td>" +
+        "<td>" + escapeHtml(up5) + "</td>" +
+        "<td><button class='btn mini' data-manage='" + escapeHtml(p.id) + "'>管理</button></td></tr>";
     }).join("");
+    body.querySelectorAll("button[data-manage]").forEach(function (btn) {
+      btn.addEventListener("click", function () { openPoolManager(btn.dataset.manage); });
+    });
+  }
+
+  function openPoolManager(poolId) {
+    apiGet("page/pools/detail", { pool_id: poolId })
+      .then(function (d) {
+        $("#poolModalTitle").textContent = "卡池管理： " + d.name;
+        $("#poolPickup6").value = (d.override && d.override.pickup_6) || d.pickup_6 || "";
+        $("#poolPickup5").value = (d.override && d.override.pickup_5) || d.pickup_5 || "";
+        var labels = { "6": "6★", "5": "5★", "4": "4★", "3": "3★" };
+        var html = "";
+        ["6", "5", "4", "3"].forEach(function (r) {
+          var list = d.by_rarity[r] || [];
+          html += "<details class='pool-list'><summary>" + labels[r] + "（" + list.length + " 名）</summary>" +
+            "<div class='ops-tags'>" + list.map(escapeHtml).map(function (n) { return "<span class='op-tag'>" + n + "</span>"; }).join("") + "</div></details>";
+        });
+        $("#poolLists").innerHTML = html;
+        $("#poolModal").hidden = false;
+      })
+      .catch(function (e) { toast(e.message, true); });
+    $("#poolSave").onclick = function () {
+      var up6 = $("#poolPickup6").value.trim();
+      var up5 = $("#poolPickup5").value.trim();
+      $("#poolModal").hidden = true;
+      apiPost("page/pools/override", { pool_id: poolId, pickup_6: up6, pickup_5: up5 })
+        .then(function () { toast("UP 已保存"); return loadAll(); })
+        .catch(function (e) { toast(e.message, true); });
+    };
+    $("#poolCancel").onclick = function () { $("#poolModal").hidden = true; };
+    $("#poolModal").onclick = function (e) {
+      if (e.target === $("#poolModal")) $("#poolModal").hidden = true;
+    };
   }
 
   function triggerUpdate() {

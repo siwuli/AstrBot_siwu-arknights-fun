@@ -45,6 +45,7 @@ LOG_TAG = "[arknights_fun]"
 DATA_DIR = os.path.join(get_astrbot_plugin_data_path(), "arknights_fun")
 USER_FILE = os.path.join(DATA_DIR, "users.json")
 AVATAR_CACHE = os.path.join(DATA_DIR, "avatars")
+POOL_OVERRIDE_FILE = os.path.join(DATA_DIR, "pool_overrides.json")
 
 # 旧独立插件的遗留数据（一次性迁移，成功后不再读取）
 LEGACY_GACHA_FILE = os.path.join(
@@ -92,7 +93,9 @@ class ArknightsFunPlugin(star.Star):
         self.data = GameData()
         self.guess = GuessEngine(self.data)
         self._users: dict[str, dict] = {}
+        self._pool_overrides: dict[str, dict] = {}
         self._load_users()
+        self._load_pool_overrides()
         self._migrate_legacy()
         self._start_download_if_needed()
         self._register_admin_web(context)
@@ -261,17 +264,45 @@ class ArknightsFunPlugin(star.Star):
         return self.data.pools[0]
 
     def _pool_with_override(self, pool: dict | None) -> dict | None:
-        """把配置里的 UP 覆盖合并到卡池（新版官方数据无 UP 时手动指定）。"""
+        """把 UP 覆盖合并到卡池：管理后台按池覆盖优先，全局配置兜底。"""
         if not pool:
             return pool
         out = dict(pool)
-        pickup6 = str(self._cfg("gacha_pickup_6", "") or "").strip()
-        pickup5 = str(self._cfg("gacha_pickup_5", "") or "").strip()
+        ov = (self._pool_overrides or {}).get(str(pool.get("id", ""))) or {}
+        pickup6 = str(ov.get("pickup_6") or self._cfg("gacha_pickup_6", "") or "").strip()
+        pickup5 = str(ov.get("pickup_5") or self._cfg("gacha_pickup_5", "") or "").strip()
         if pickup6:
             out["pickup_6"] = pickup6
         if pickup5:
             out["pickup_5"] = pickup5
         return out
+
+    def _load_pool_overrides(self) -> None:
+        try:
+            with open(POOL_OVERRIDE_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            self._pool_overrides = {str(k): v for k, v in (data or {}).items() if isinstance(v, dict)}
+        except (OSError, ValueError):
+            self._pool_overrides = {}
+
+    def _save_pool_overrides(self) -> None:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = POOL_OVERRIDE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self._pool_overrides, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, POOL_OVERRIDE_FILE)
+
+    def _admin_set_pool_override(self, pool_id: str, pickup_6: str, pickup_5: str) -> str | None:
+        with _user_lock:
+            if str(pickup_6).strip() or str(pickup_5).strip():
+                self._pool_overrides[str(pool_id)] = {
+                    "pickup_6": str(pickup_6).strip(),
+                    "pickup_5": str(pickup_5).strip(),
+                }
+            else:
+                self._pool_overrides.pop(str(pool_id), None)
+            self._save_pool_overrides()
+        return None
 
     # ------------------------------------------------------------------
     # 签到

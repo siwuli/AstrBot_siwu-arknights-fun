@@ -39,6 +39,8 @@ class ArknightsFunWebAdmin:
             ("/page/users/delete", self.api_delete, ["POST"], "删除用户"),
             ("/page/tools/update", self.api_update_data, ["POST"], "立即更新数据"),
             ("/page/pools", self.api_pools, ["GET"], "卡池列表"),
+            ("/page/pools/detail", self.api_pool_detail, ["GET"], "卡池详情与可抽干员"),
+            ("/page/pools/override", self.api_pool_override, ["POST"], "按卡池覆盖 UP"),
         ]
         for path, handler, methods, desc in routes:
             context.register_web_api(f"/{PLUGIN_NAME}{path}", handler, methods, desc)
@@ -105,16 +107,59 @@ class ArknightsFunWebAdmin:
         return json_response({"ok": True, "data": users})
 
     async def api_pools(self):
+        by = self.p.data.by_rarity
         pools = [
             {
                 "id": str(p.get("id", "")),
                 "name": p.get("name", ""),
                 "pickup_6": p.get("pickup_6", ""),
                 "pickup_5": p.get("pickup_5", ""),
+                "counts": {
+                    "6": len(by[6]),
+                    "5": len(by[5]),
+                    "4": len(by[4]),
+                    "3": len(by[3]),
+                },
+                "override": self.p._pool_overrides.get(str(p.get("id", ""))) or {},
             }
             for p in self.p.data.pools
         ]
         return json_response({"ok": True, "data": pools})
+
+    async def api_pool_detail(self):
+        pool_id = request.query.get("pool_id", "", str)
+        pool = next((p for p in self.p.data.pools if str(p.get("id", "")) == str(pool_id)), None)
+        if pool is None:
+            return error_response("卡池不存在")
+        by = self.p.data.by_rarity
+        return json_response(
+            {
+                "ok": True,
+                "data": {
+                    "id": str(pool.get("id", "")),
+                    "name": pool.get("name", ""),
+                    "pickup_6": pool.get("pickup_6", ""),
+                    "pickup_5": pool.get("pickup_5", ""),
+                    "desc": pool.get("desc", ""),
+                    "by_rarity": {str(r): by[r] for r in (6, 5, 4, 3)},
+                    "override": self.p._pool_overrides.get(str(pool.get("id", ""))) or {},
+                },
+            },
+        )
+
+    async def api_pool_override(self):
+        data = await request.json() or {}
+        pool_id = str(data.get("pool_id") or "").strip()
+        if not pool_id:
+            return error_response("缺少卡池 ID")
+        err = self.p._admin_set_pool_override(
+            pool_id,
+            str(data.get("pickup_6") or ""),
+            str(data.get("pickup_5") or ""),
+        )
+        if err:
+            return error_response(err)
+        return json_response({"ok": True, "data": {"message": "UP 已保存"}})
 
     # ---------------- 写操作 ----------------
     async def api_adjust(self):
