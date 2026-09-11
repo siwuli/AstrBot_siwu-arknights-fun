@@ -945,3 +945,8 @@ class ArknightsFunPlugin(star.Star):
     async def terminate(self):
         """卸载时清理游戏会话与后台任务。"""
         _SESSIONS.clear()
+        # 释放复用的 Chromium 实例，避免插件重载时残留孤儿进程
+        try:
+            await render_mod.shutdown()
+        except Exception:  # noqa: BLE001
+            logger.debug("[arknights_fun] 关闭渲染浏览器失败", exc_info=True)

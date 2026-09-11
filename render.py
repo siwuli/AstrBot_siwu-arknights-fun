@@ -22,6 +22,10 @@ from .gamedata import AVATAR_DIR, PORTRAIT_DIR, GameData
 
 logger = logging.getLogger("astrbot")
 
+# 必须在导入 playwright 之前设置：容器内 HOME=/tmp，Playwright 默认的
+# ~/.cache/ms-playwright 会随容器重建丢失，统一指向镜像内预装的路径
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/ms-playwright")
+
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 GACHA_ASSETS = os.path.join(ASSETS_DIR, "gacha")
 CLASSIFY_ASSETS = os.path.join(ASSETS_DIR, "classify")
@@ -523,18 +527,77 @@ def _fit_text(draw, text: str, font, max_w: int) -> str:
 _USER_CARD_TEMPLATE = os.path.join(_USER_CARD_ASSETS, "userInfo.html")
 _PLAYWRIGHT = None
 _BROWSER = None
+_BROWSER_LOCK = None
+
+
+class RenderUnavailable(RuntimeError):
+    """渲染依赖不可用（Playwright 未安装 / Chromium 内核或系统依赖缺失）。"""
+
+
+def _get_lock():
+    """惰性创建锁，避免在导入期（可能无运行中的事件循环）绑定事件循环。"""
+    global _BROWSER_LOCK
+    if _BROWSER_LOCK is None:
+        _BROWSER_LOCK = asyncio.Lock()
+    return _BROWSER_LOCK
+
+
+def _browser_alive() -> bool:
+    """浏览器进程是否仍然存活（崩溃后返回 False，触发重建）。"""
+    if _BROWSER is None:
+        return False
+    try:
+        return bool(_BROWSER.is_connected())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 async def _ensure_browser():
     """复用进程内的 Playwright Chromium（与查询插件一致的浏览器渲染方案）。"""
     global _PLAYWRIGHT, _BROWSER
-    if _BROWSER is not None:
+    if _browser_alive():
         return _BROWSER
-    from playwright.async_api import async_playwright
+    async with _get_lock():
+        if _browser_alive():
+            return _BROWSER
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as e:
+            raise RenderUnavailable(
+                "未安装 Playwright，资料卡渲染不可用。请在 AstrBot 容器内执行："
+                "pip install playwright && python -m playwright install --with-deps chromium"
+            ) from e
+        if _PLAYWRIGHT is None:
+            _PLAYWRIGHT = await async_playwright().start()
+        try:
+            _BROWSER = await _PLAYWRIGHT.chromium.launch(
+                headless=True,
+                # --disable-dev-shm-usage：容器默认 /dev/shm 仅 64MB，截图可能崩溃
+                args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
+            )
+        except Exception as e:  # noqa: BLE001
+            raise RenderUnavailable(
+                f"Chromium 启动失败（浏览器内核缺失或系统依赖不完整）：{e}"
+            ) from e
+        return _BROWSER
 
-    _PLAYWRIGHT = await async_playwright().start()
-    _BROWSER = await _PLAYWRIGHT.chromium.launch(headless=True, args=["--no-sandbox", "--disable-gpu"])
-    return _BROWSER
+
+async def shutdown() -> None:
+    """关闭复用的浏览器与 Playwright（插件卸载/重载时调用）。"""
+    global _PLAYWRIGHT, _BROWSER
+    browser, pw = _BROWSER, _PLAYWRIGHT
+    _BROWSER = None
+    _PLAYWRIGHT = None
+    if browser is not None:
+        try:
+            await browser.close()
+        except Exception:  # noqa: BLE001
+            pass
+    if pw is not None:
+        try:
+            await pw.stop()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _build_card_data(uid, nickname, user, avatar_cache, fetch_avatar, operators):
@@ -625,6 +688,10 @@ async def render_user_card(
         out = os.path.join(avatar_cache, f"user_card_{int(time.time() * 1000)}_{random.randrange(100000)}.png")
         await asyncio.to_thread(_save_png, out, shot)
         return out
+    except RenderUnavailable as e:
+        # 依赖缺失属于环境问题：明确报错原因，仍返回 None 让调用方回退纯文本
+        logger.error(f"[arknights_fun] 资料卡渲染不可用：{e}")
+        return None
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[arknights_fun] 用户信息卡片浏览器渲染失败: {e}")
         return None
