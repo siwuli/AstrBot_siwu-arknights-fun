@@ -31,9 +31,12 @@ GACHA_ASSETS = os.path.join(ASSETS_DIR, "gacha")
 CLASSIFY_ASSETS = os.path.join(ASSETS_DIR, "classify")
 RANK_ASSETS = os.path.join(ASSETS_DIR, "rank")
 
-_AVATAR_URL = (
-    "https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/master/zh_CN/gamedata/"
-    "avatar/{oid}%231.png"
+# 头像镜像：raw.githubusercontent 在部分网络/机房不可达（连接被重置），按顺序回退。
+# gitee 的 amiya-bot-assets 是生态内官方资源镜像（含 avatar/portrait），实测最稳。
+_AVATAR_MIRRORS = (
+    "https://gitee.com/amiya-bot/amiya-bot-assets/raw/master/avatar/{oid}%231.png",
+    "https://cdn.jsdelivr.net/gh/Kengxxiao/ArknightsGameData@master/zh_CN/gamedata/avatar/{oid}%231.png",
+    "https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/master/zh_CN/gamedata/avatar/{oid}%231.png",
 )
 
 _FONT_CANDIDATES = [
@@ -84,18 +87,21 @@ def _op_art(data: GameData, name: str, cache_dir: str, fetch: bool) -> str | Non
     if fetch and cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
         target = os.path.join(cache_dir, f"{oid}.png")
-        try:
-            req = urllib.request.Request(
-                _AVATAR_URL.format(oid=oid),
-                headers={"User-Agent": "Mozilla/5.0 (AstrBot arknights_fun)"},
-            )
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                raw = resp.read()
-            with open(target, "wb") as f:
-                f.write(raw)
-            return target
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[arknights_fun] 头像下载失败 {name}: {e}")
+        last_error: Exception | None = None
+        for template in _AVATAR_MIRRORS:
+            try:
+                req = urllib.request.Request(
+                    template.format(oid=oid),
+                    headers={"User-Agent": "Mozilla/5.0 (AstrBot arknights_fun)"},
+                )
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    raw = resp.read()
+                with open(target, "wb") as f:
+                    f.write(raw)
+                return target
+            except Exception as e:  # noqa: BLE001
+                last_error = e
+        logger.warning(f"[arknights_fun] 头像下载失败 {name}: {last_error}")
     return None
 
 
@@ -363,18 +369,21 @@ def _op_icon(data: GameData, name: str, cache_dir: str, fetch: bool) -> str | No
     if fetch and cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
         target = os.path.join(cache_dir, f"{oid}.png")
-        try:
-            req = urllib.request.Request(
-                _AVATAR_URL.format(oid=oid),
-                headers={"User-Agent": "Mozilla/5.0 (AstrBot arknights_fun)"},
-            )
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                raw = resp.read()
-            with open(target, "wb") as f:
-                f.write(raw)
-            return target
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[arknights_fun] 头像下载失败 {name}: {e}")
+        last_error: Exception | None = None
+        for template in _AVATAR_MIRRORS:
+            try:
+                req = urllib.request.Request(
+                    template.format(oid=oid),
+                    headers={"User-Agent": "Mozilla/5.0 (AstrBot arknights_fun)"},
+                )
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    raw = resp.read()
+                with open(target, "wb") as f:
+                    f.write(raw)
+                return target
+            except Exception as e:  # noqa: BLE001
+                last_error = e
+        logger.warning(f"[arknights_fun] 头像下载失败 {name}: {last_error}")
     return None
 
 
